@@ -1280,10 +1280,23 @@ function chromaBurst(){
 // core's breathing are always in lockstep rather than two clocks drifting apart over time.
 const MUSIC_MUTED_KEY = 'pulseArenaMusicMuted';
 let audioCtx = null;
-let musicGain = null;
+let musicGain = null;      // mute on/off (user toggle)
+let musicActiveGain = null; // in-a-level on/off (menu/results silence, gameplay plays)
+let sfxGain = null;
 let musicMuted = localStorage.getItem(MUSIC_MUTED_KEY) === '1';
 let dronePad = null;
-let lastPulseSin = 0;
+let lastPulseCos = 0;
+let pulseCount = 0;
+let chordIndex = 0;
+// a slow 4-chord progression (Am - F - C - G) the pad and arpeggio both follow, so there's
+// real harmonic movement instead of one static drone forever
+const CHORDS = [
+  [220.00, 261.63, 329.63], // Am: A3 C4 E4
+  [174.61, 220.00, 261.63], // F:  F3 A3 C4
+  [130.81, 164.81, 196.00], // C:  C3 E3 G3
+  [196.00, 246.94, 293.66]  // G:  G3 B3 D4
+];
+const CHORD_LEN_PULSES = 4; // one chord lasts this many core-pulse cycles
 
 function ensureAudio(){
   if(audioCtx) return;
@@ -1292,12 +1305,19 @@ function ensureAudio(){
   audioCtx = new Ctx();
   musicGain = audioCtx.createGain();
   musicGain.gain.value = musicMuted ? 0 : 2.1;
+  musicActiveGain = audioCtx.createGain();
+  musicActiveGain.gain.value = 0; // starts silent — updateMusic() fades it in once a level actually starts
+  sfxGain = audioCtx.createGain();
+  sfxGain.gain.value = 1;
   // gain this high would otherwise hard-clip into harsh digital distortion — a limiter
-  // right before the destination keeps it loud without the crackle
+  // right before the destination keeps it loud without the crackle. sfx share it too, so a
+  // burst of hits/severs never spikes into distortion alongside the music.
   const limiter = audioCtx.createDynamicsCompressor();
   limiter.threshold.value = -8; limiter.knee.value = 6; limiter.ratio.value = 14;
   limiter.attack.value = 0.003; limiter.release.value = 0.1;
-  musicGain.connect(limiter); limiter.connect(audioCtx.destination);
+  musicGain.connect(musicActiveGain); musicActiveGain.connect(limiter);
+  sfxGain.connect(limiter);
+  limiter.connect(audioCtx.destination);
   startDrone();
 }
 // browsers block audio until a real user gesture — the very first click or keypress
@@ -1305,9 +1325,10 @@ function ensureAudio(){
 window.addEventListener('pointerdown', ensureAudio, { once:true });
 window.addEventListener('keydown', ensureAudio, { once:true });
 
-// a soft sustained pad underneath everything — three low, slightly detuned sine layers
+// a soft sustained pad underneath everything — three layers that retune to follow the
+// current chord (see updateDroneChord), an octave below the arpeggio register
 function startDrone(){
-  const freqs = [55, 110, 164.81]; // A1, A2, E3
+  const freqs = CHORDS[0].map(f=>f/2);
   dronePad = { oscs:[], gains:[] };
   for(const f of freqs){
     const osc = audioCtx.createOscillator();
@@ -1319,6 +1340,32 @@ function startDrone(){
     osc.start();
     dronePad.oscs.push(osc); dronePad.gains.push(g);
   }
+}
+
+// glides the sustained pad to the new chord's notes instead of snapping, so chord changes
+// sound like a chord change rather than a click
+function updateDroneChord(freqs){
+  if(!dronePad) return;
+  dronePad.oscs.forEach((osc,i)=>{ osc.frequency.setTargetAtTime(freqs[i]/2, audioCtx.currentTime, 0.6); });
+}
+
+// three quick ascending plucks through the current chord, landing on the pulse — this is
+// what turns the beat from a lone kick into an actual musical phrase
+function playChordArpeggio(freqs, intensity){
+  if(!audioCtx) return;
+  const t0 = audioCtx.currentTime;
+  freqs.forEach((f,i)=>{
+    const t = t0 + i*0.085;
+    const osc = audioCtx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.value = f;
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.22*intensity, t+0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t+0.32);
+    osc.connect(g); g.connect(musicGain);
+    osc.start(t); osc.stop(t+0.34);
+  });
 }
 
 // one percussive low thump per core-pulse cycle — pitch drops fast, envelope is a quick
@@ -1339,22 +1386,119 @@ function playCoreThump(intensity){
   osc.start(t); osc.stop(t+0.4);
 }
 
-// called once per frame with the same `elapsed` that drives the core's visual pulse —
-// fires the thump the instant that sine wave crosses from falling to rising, i.e. once
-// per pulse cycle, exactly when the core visually starts swelling again
+// music only plays during an actual run — silent at the menu, level select, and result
+// screens, so it doesn't just drone forever in the background
+function musicShouldPlay(){
+  return state==='playing' || state==='exploding' || state==='levelup';
+}
+
+// called once per frame with the same `elapsed` that drives the core's visual pulse
+// (drawCore's `pulse = 1 + Math.sin(elapsed*3.2)*0.06`) — the core is at its biggest, i.e.
+// mid-pulse, right when that sine hits its peak, not when it merely starts rising. A peak is
+// where the derivative (cosine) crosses from positive to negative, so that's what's tracked
+// here instead of the sine's zero-crossing, to land the thump on the pulse itself.
 function updateMusic(){
   if(!audioCtx) return;
-  const pulseSin = Math.sin(elapsed*3.2);
-  if(pulseSin>0 && lastPulseSin<=0){
-    playCoreThump(corePhase>=2 ? 1.3 : 1);
+  const active = musicShouldPlay();
+  musicActiveGain.gain.setTargetAtTime(active ? 1 : 0, audioCtx.currentTime, 0.4);
+  const pulseCos = Math.cos(elapsed*3.2);
+  if(active && pulseCos<=0 && lastPulseCos>0){
+    pulseCount++;
+    if(pulseCount % CHORD_LEN_PULSES === 0){
+      chordIndex = (chordIndex+1) % CHORDS.length;
+      updateDroneChord(CHORDS[chordIndex]);
+    }
+    const intensity = corePhase>=2 ? 1.3 : 1;
+    playCoreThump(intensity);
+    playChordArpeggio(CHORDS[chordIndex], intensity);
   }
-  lastPulseSin = pulseSin;
+  lastPulseCos = pulseCos;
 }
 
 function setMusicMuted(muted){
   musicMuted = muted;
   localStorage.setItem(MUSIC_MUTED_KEY, muted ? '1' : '0');
   if(musicGain) musicGain.gain.value = muted ? 0 : 2.1;
+}
+
+// ---- sound effects: separate from music, always audible when supported, sharing the same
+// limiter so a burst of hits/severs never distorts alongside the music ----
+let noiseBuffer = null;
+function getNoiseBuffer(){
+  if(noiseBuffer) return noiseBuffer;
+  const len = audioCtx.sampleRate;
+  noiseBuffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+  const data = noiseBuffer.getChannelData(0);
+  for(let i=0;i<len;i++) data[i] = Math.random()*2-1;
+  return noiseBuffer;
+}
+
+function playTone({freq, freqEnd=null, dur=0.15, type='sine', peak=0.3, attack=0.006}){
+  if(!audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t);
+  if(freqEnd!=null) osc.frequency.exponentialRampToValueAtTime(Math.max(freqEnd,1), t+dur);
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(peak, t+attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  osc.connect(g); g.connect(sfxGain);
+  osc.start(t); osc.stop(t+dur+0.02);
+}
+
+function playNoiseBurst({dur=0.12, filterFreq=1500, filterQ=1, peak=0.3}){
+  if(!audioCtx) return;
+  const t = audioCtx.currentTime;
+  const src = audioCtx.createBufferSource();
+  src.buffer = getNoiseBuffer();
+  const filt = audioCtx.createBiquadFilter();
+  filt.type = 'bandpass'; filt.frequency.value = filterFreq; filt.Q.value = filterQ;
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(peak, t+0.006);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  src.connect(filt); filt.connect(g); g.connect(sfxGain);
+  src.start(t); src.stop(t+dur+0.02);
+}
+
+// one distinct timbre per attack type, fired once per spawn event (not once per pellet in a
+// multi-shot volley) so a fan/ring burst reads as one sound, not a machine-gun of clicks
+function playProjectileSfx(type){
+  switch(type){
+    case 'straight': playTone({freq:520, freqEnd:340, dur:0.1, type:'triangle', peak:0.22}); break;
+    case 'fan': playNoiseBurst({dur:0.14, filterFreq:1500, filterQ:0.8, peak:0.26}); break;
+    case 'ring': playNoiseBurst({dur:0.2, filterFreq:900, filterQ:0.6, peak:0.26}); break;
+    case 'sniperWarn': playTone({freq:1500, dur:0.5, type:'sawtooth', peak:0.1}); break;
+    case 'sniperFire': playTone({freq:1900, freqEnd:500, dur:0.12, type:'square', peak:0.24}); break;
+    case 'homing': playTone({freq:260, freqEnd:480, dur:0.3, type:'sine', peak:0.18}); break;
+    case 'bomb': playTone({freq:130, freqEnd:85, dur:0.25, type:'sine', peak:0.24}); break;
+    case 'bombExplode': playNoiseBurst({dur:0.32, filterFreq:400, filterQ:0.5, peak:0.4}); break;
+    case 'laserWarn': playTone({freq:180, dur:0.75, type:'sawtooth', peak:0.1}); break;
+    case 'laserFire': playNoiseBurst({dur:0.5, filterFreq:2600, filterQ:2, peak:0.3}); break;
+    case 'wave': playTone({freq:420, freqEnd:640, dur:0.4, type:'sine', peak:0.16}); break;
+    case 'spiral': playTone({freq:680, freqEnd:1080, dur:0.32, type:'triangle', peak:0.16}); break;
+  }
+}
+
+function playSeverSfx(){
+  playTone({freq:900, freqEnd:1700, dur:0.09, type:'sine', peak:0.3});
+  playNoiseBurst({dur:0.06, filterFreq:3200, filterQ:1.4, peak:0.14});
+}
+
+function playAbilitySfx(id){
+  switch(id){
+    case 'jump': playTone({freq:400, freqEnd:700, dur:0.16, type:'sine', peak:0.24}); break;
+    case 'dash': playNoiseBurst({dur:0.14, filterFreq:1800, filterQ:0.7, peak:0.26}); break;
+    case 'wall': playTone({freq:300, freqEnd:620, dur:0.22, type:'triangle', peak:0.26}); break;
+    case 'nova': playNoiseBurst({dur:0.3, filterFreq:700, filterQ:0.6, peak:0.4}); break;
+    case 'decoy': playTone({freq:900, freqEnd:1300, dur:0.15, type:'sine', peak:0.2}); break;
+    case 'slowOn': playTone({freq:200, freqEnd:120, dur:0.3, type:'sine', peak:0.2}); break;
+    case 'slowOff': playTone({freq:120, freqEnd:220, dur:0.2, type:'sine', peak:0.18}); break;
+    case 'shieldBlock': playTone({freq:700, freqEnd:1100, dur:0.25, type:'triangle', peak:0.3}); break;
+    case 'hit': playNoiseBurst({dur:0.2, filterFreq:300, filterQ:0.5, peak:0.3}); break;
+  }
 }
 
 const muteBtn = document.getElementById('muteBtn');
@@ -1599,6 +1743,7 @@ function playerPredicted(lead){
 }
 
 function spawnStraight(){
+  playProjectileSfx('straight');
   const sm = speedMult();
   const targ = playerPredicted(rand(0.1,0.5));
   // deterministic once fired: a clean aimed line the player can read and dodge,
@@ -1614,6 +1759,7 @@ function spawnStraight(){
 }
 
 function spawnFan(){
+  playProjectileSfx('fan');
   const sm = speedMult();
   const targ = playerPredicted(0.3);
   const base = Math.atan2(targ.y-CY, targ.x-CX);
@@ -1632,6 +1778,7 @@ function spawnFan(){
 }
 
 function spawnRing(){
+  playProjectileSfx('ring');
   const sm = speedMult();
   const count = 12 + Math.min(Math.floor(effectiveDiffLevel()/3), 7);
   const speed = R*0.38*sm;
@@ -1648,11 +1795,13 @@ function spawnRing(){
 }
 
 function spawnSniper(){
+  playProjectileSfx('sniperWarn');
   const targ = playerPredicted(0);
   const a = Math.atan2(targ.y-CY, targ.x-CX);
   telegraphs.push({
     type:'sniperWarn', angle:a, t:0, dur:0.55,
     onDone(){
+      playProjectileSfx('sniperFire');
       const sm = speedMult();
       const speed = R*1.85*sm;
       const sr = spawnR();
@@ -1666,6 +1815,7 @@ function spawnSniper(){
 }
 
 function spawnHoming(){
+  playProjectileSfx('homing');
   const sm = speedMult();
   const a = rand(0,Math.PI*2);
   const speed = R*0.32*sm;
@@ -1679,6 +1829,7 @@ function spawnHoming(){
 }
 
 function spawnBomb(){
+  playProjectileSfx('bomb');
   const targ = clampToArena(playerPredicted(0.9));
   const a = Math.atan2(targ.y-CY, targ.x-CX);
   const sr = spawnR();
@@ -1694,6 +1845,7 @@ function spawnBomb(){
 }
 
 function explodeBomb(p){
+  playProjectileSfx('bombExplode');
   const sm = speedMult();
   const count = 10;
   const speed = R*0.5*sm;
@@ -1712,17 +1864,20 @@ function explodeBomb(p){
 }
 
 function spawnLaser(){
+  playProjectileSfx('laserWarn');
   const targ = playerPredicted(0.15);
   const a = Math.atan2(targ.y-CY, targ.x-CX);
   telegraphs.push({
     type:'laserWarn', angle:a, t:0, dur:0.8,
     onDone(){
+      playProjectileSfx('laserFire');
       telegraphs.push({ type:'laserActive', angle:a, t:0, dur:1.0, rotSpeed: rand(-0.5,0.5), halfWidth:0.16 });
     }
   });
 }
 
 function spawnWave(){
+  playProjectileSfx('wave');
   const sm = speedMult();
   const targ = playerPredicted(0.3);
   const baseAngle = Math.atan2(targ.y-CY, targ.x-CX);
@@ -1740,6 +1895,7 @@ function spawnWave(){
 }
 
 function spawnSpiral(){
+  playProjectileSfx('spiral');
   const sm = speedMult();
   const a0 = rand(0,Math.PI*2);
   const dir = Math.random()<0.5 ? 1 : -1;
@@ -1757,6 +1913,7 @@ function spawnSpiral(){
 // distinct from the continuous weighted-random spawner, which is briefly suppressed
 // while one of these plays out so the gap reads clearly.
 function patternCrossGate(){
+  playProjectileSfx('ring');
   const count = 16;
   const gapCenterAngle = Math.atan2(player.y-CY, player.x-CX);
   const gapHalf = 0.5;
@@ -1775,6 +1932,7 @@ function patternCrossGate(){
 }
 
 function patternPincerFans(){
+  playProjectileSfx('fan');
   const speed = R*0.5*speedMult();
   const sr = spawnR();
   const baseA = rand(0,Math.PI*2);
@@ -1793,11 +1951,13 @@ function patternPincerFans(){
 }
 
 function patternSniperCross(){
+  playProjectileSfx('sniperWarn');
   const dirs = [0, Math.PI/2, Math.PI, -Math.PI/2];
   for(const a of dirs){
     telegraphs.push({
       type:'sniperWarn', angle:a, t:0, dur:0.7,
       onDone(){
+        playProjectileSfx('sniperFire');
         const speed = R*1.7*speedMult();
         const sr = spawnR();
         projectiles.push(mkProj({
@@ -1811,6 +1971,7 @@ function patternSniperCross(){
 }
 
 function patternSpiralBloom(){
+  playProjectileSfx('spiral');
   const arms = 5;
   const dir = Math.random()<0.5 ? 1 : -1;
   const sr = spawnR();
@@ -1825,6 +1986,7 @@ function patternSpiralBloom(){
 }
 
 function patternWaveCorridor(){
+  playProjectileSfx('wave');
   const speed = R*0.38*speedMult();
   const baseAngle = rand(0,Math.PI*2);
   const sr = spawnR();
@@ -1919,6 +2081,7 @@ function onJumpPressed(mx, my){
   // on the jumpCd timer; forbidden mid-dash so the two i-frame windows can't chain into
   // near-permanent invulnerability
   if(player.jumpCharges<=0 || player.dashT>0) return;
+  playAbilitySfx('jump');
   player.jumpDurActive = jumpDurMax();
   player.jumpT = player.jumpDurActive;
   // launch velocity only — jumpZ (current visual height) is left alone, so triggering a
@@ -1932,6 +2095,7 @@ function onJumpPressed(mx, my){
 
 function onAbility1Pressed(){ // Wall — only once unlocked via an upgrade
   if(!player.wallUnlocked || player.wallCd>0) return;
+  playAbilitySfx('wall');
   player.wallT = ABILITY.WALL_DUR;
   player.wallCd = ABILITY.WALL_CD;
   player.wallAngle = Math.atan2(player.y-CY, player.x-CX);
@@ -1945,8 +2109,10 @@ function onAbility2Pressed(){ // Slow-Mo — press to toggle, not hold; once on 
   // the way to empty on its own. Press again to cancel it early.
   if(player.slowActive){
     player.slowActive = false;
+    playAbilitySfx('slowOff');
   } else if(player.slowEnergy > ABILITY.SLOW_MIN_TO_USE){
     player.slowActive = true;
+    playAbilitySfx('slowOn');
   }
 }
 
@@ -1970,6 +2136,7 @@ function updateSlowMo(dt){
 function onAbility3Pressed(mx, my){ // Dash — forbidden mid-hop, so jump+dash can't chain
   // into near-permanent invulnerability
   if(player.dashCd>0 || player.jumpT>0) return;
+  playAbilitySfx('dash');
   let dx=mx, dy=my;
   if(Math.hypot(mx,my)===0){ dx=Math.cos(player.facing); dy=Math.sin(player.facing); }
   const dl = Math.hypot(dx,dy)||1;
@@ -1987,6 +2154,7 @@ function onAbility4Pressed(){ // Nova — only once unlocked via an upgrade
 
 function onAbility5Pressed(){ // Decoy — only once unlocked via an upgrade
   if(!player.decoyUnlocked || player.decoyCd>0) return;
+  playAbilitySfx('decoy');
   player.decoyCd = ABILITY.DECOY_CD;
   player.decoyT = ABILITY.DECOY_DUR;
   player.decoyX = player.x; player.decoyY = player.y;
@@ -2343,8 +2511,10 @@ function consumeShieldOrFail(){
     shakeT = 0.3; shakeMag = 14; shakeMax = shakeT;
     flashHit(0.6, '#5be3ff');
     spawnBurstParticles(player.x, player.y, '#5be3ff', 20);
+    playAbilitySfx('shieldBlock');
     return;
   }
+  playAbilitySfx('hit');
   failLevel();
 }
 
@@ -2373,6 +2543,7 @@ function checkSevers(){
 }
 
 function registerSever(p){
+  playSeverSfx();
   severCount++;
   p.dead = true; // cutting through a shot's tail destroys it — this is baseline now, not an upgrade perk
   spawnBurstParticles(p.x,p.y,'#bdfff0',6);
@@ -2399,6 +2570,7 @@ function damageCore(amount){
 
 // Pulse Nova upgrade: an instant burst that destroys everything near the player
 function triggerNova(){
+  playAbilitySfx('nova');
   const radius = player.r*ABILITY.NOVA_RADIUS_MULT;
   let kills = 0;
   for(const p of projectiles){
