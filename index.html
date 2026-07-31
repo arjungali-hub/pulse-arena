@@ -1354,11 +1354,11 @@ function setMusicMuted(muted){
 
 const muteBtn = document.getElementById('muteBtn');
 muteBtn.textContent = 'MUSIC: ' + (musicMuted ? 'OFF' : 'ON');
-muteBtn.classList.toggle('on', musicMuted);
+muteBtn.classList.toggle('on', !musicMuted);
 muteBtn.addEventListener('click', ()=>{
   setMusicMuted(!musicMuted);
   muteBtn.textContent = 'MUSIC: ' + (musicMuted ? 'OFF' : 'ON');
-  muteBtn.classList.toggle('on', musicMuted);
+  muteBtn.classList.toggle('on', !musicMuted);
 });
 
 // ================= UPGRADES / LEVEL-UP =================
