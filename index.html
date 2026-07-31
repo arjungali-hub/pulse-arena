@@ -51,7 +51,9 @@
   .level-time-label b{ color:var(--text); font-weight:700; }
 
   .hud-bottom{
-    position:absolute; left:16px; top:50%; transform:translateY(-50%);
+    /* nudged down from dead-center so the ability column clears the score block's extra
+       lines in test mode (Severs + Passthroughs), which would otherwise run behind it */
+    position:absolute; left:16px; top:60%; transform:translateY(-50%);
   }
   .abilities{ display:flex; flex-direction:column; gap:12px; pointer-events:none; }
   .ability{
@@ -196,6 +198,23 @@
   }
   .bind-row .bind-btn:hover{ background:rgba(91,227,255,.12); }
   .bind-row .bind-btn.listening{ border-color:var(--orange); color:var(--orange); background:rgba(255,171,74,.12); }
+  .mode-cards{ display:flex; gap:16px; justify-content:center; flex-wrap:wrap; margin-top:14px; }
+  .mode-card{
+    width:280px; padding:22px 20px; border-radius:18px; cursor:pointer; text-align:left;
+    background:rgba(255,255,255,.03); border:1.5px solid rgba(255,255,255,.14);
+    pointer-events:auto; transition:transform .15s ease, border-color .15s ease, background .15s ease;
+  }
+  .mode-card:hover{ transform:translateY(-3px); }
+  .mode-card.levels{ border-color:rgba(91,227,255,.35); }
+  .mode-card.levels:hover{ border-color:var(--cyan); background:rgba(91,227,255,.08); }
+  .mode-card.endless{ border-color:rgba(255,91,216,.35); }
+  .mode-card.endless:hover{ border-color:var(--magenta); background:rgba(255,91,216,.08); }
+  .mode-card-title{ font-size:24px; font-weight:800; margin-bottom:6px; }
+  .mode-card.levels .mode-card-title{ color:var(--cyan); text-shadow:0 0 14px rgba(91,227,255,.5); }
+  .mode-card.endless .mode-card-title{ color:var(--magenta); text-shadow:0 0 14px rgba(255,91,216,.5); }
+  .mode-card-desc{ font-size:12.5px; color:var(--dim); line-height:1.4; margin-bottom:12px; }
+  .mode-card-features{ margin:0; padding-left:18px; font-size:11.5px; color:var(--dim); line-height:1.7; }
+
   .cta{
     font-size:15px; color:var(--text); background:rgba(91,227,255,.12);
     border:1.5px solid var(--cyan); padding:12px 30px; border-radius:999px;
@@ -277,6 +296,10 @@
   }
   .cta.ghost:hover{ background:rgba(255,255,255,.06); }
   .cta.ghost.on{ border-color:var(--purple); color:var(--purple); background:rgba(176,107,255,.1); }
+  /* .ghost is smaller (font/padding) than the base .cta by default, which mismatches it
+     against a solid .cta sitting right next to it in the same row — this restores the
+     base size for any ghost button explicitly paired with one */
+  .cta.ghost.same-row{ font-size:15px; padding:12px 30px; margin-top:0; }
 
   .test-mode-badge{
     position:absolute; top:14px; left:50%; transform:translateX(-50%);
@@ -346,9 +369,25 @@
     <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:8px;">
       <button class="cta ghost" id="howToPlayBtn">HOW TO PLAY</button>
     </div>
-    <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:14px;">
-      <button class="cta" id="continueBtn">LEVELS</button>
-      <button class="cta" id="endlessBtn">ENDLESS</button>
+    <div class="mode-cards">
+      <div class="mode-card levels" id="continueBtn">
+        <div class="mode-card-title">Levels</div>
+        <div class="mode-card-desc">Destroy the core to clear all 20 levels — no time limit, just wear it down.</div>
+        <ul class="mode-card-features">
+          <li>Sever shots to damage the core</li>
+          <li>Unlock new abilities (Q, F, R)</li>
+          <li>Star ratings for fast clears</li>
+        </ul>
+      </div>
+      <div class="mode-card endless" id="endlessBtn">
+        <div class="mode-card-title">Endless</div>
+        <div class="mode-card-desc">No core, no time limit — just survive as long as you possibly can.</div>
+        <ul class="mode-card-features">
+          <li>Difficulty ramps up forever</li>
+          <li>Score-boosting upgrades</li>
+          <li>Chase a new high score</li>
+        </ul>
+      </div>
     </div>
     <div style="margin-top:18px;"><button class="cta ghost" id="testModeBtn">TEST MODE: OFF</button></div>
     <div style="margin-top:22px;"><button class="cta ghost" id="controlsBtn">CONTROLS</button></div>
@@ -377,7 +416,7 @@
     <div class="title" id="tutorialTitle" style="font-size:34px;">Welcome</div>
     <div class="tutorial-body" id="tutorialBody"></div>
     <div id="tutorialSlideNav" style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:18px;">
-      <button class="cta ghost" id="tutorialBackBtn" style="min-width:120px;">BACK</button>
+      <button class="cta ghost same-row" id="tutorialBackBtn" style="min-width:120px;">BACK</button>
       <button class="cta" id="tutorialNextBtn" style="min-width:120px;">NEXT</button>
     </div>
     <div class="tutorial-skip" id="tutorialSkipBtn">Skip tutorial</div>
@@ -391,7 +430,7 @@
     <div class="subtitle" style="margin-bottom:8px;">Click REBIND, then press any key or mouse button</div>
     <div class="bind-list" id="bindList"></div>
     <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
-      <button class="cta ghost" id="resetBindsBtn" style="min-width:180px;">RESET TO DEFAULTS</button>
+      <button class="cta ghost same-row" id="resetBindsBtn" style="min-width:180px;">RESET TO DEFAULTS</button>
       <button class="cta" id="closeControlsBtn" style="min-width:180px;">BACK</button>
     </div>
   </div>
@@ -412,9 +451,9 @@
     <div class="go-time" id="goPercent">0%</div>
     <div class="go-best" id="goBest">complete</div>
     <div style="display:flex; gap:12px; justify-content:center; margin-top:4px; flex-wrap:wrap;">
-      <button class="cta" id="retryBtn">RETRY (R / SPACE)</button>
-      <button class="cta" id="nextLevelBtn" style="display:none;">NEXT LEVEL (SPACE)</button>
-      <button class="cta" id="levelSelectBtn">LEVEL SELECT (L)</button>
+      <button class="cta" id="retryBtn" style="min-width:210px;">RETRY (R / SPACE)</button>
+      <button class="cta" id="nextLevelBtn" style="min-width:210px; display:none;">NEXT LEVEL (SPACE)</button>
+      <button class="cta" id="levelSelectBtn" style="min-width:210px;">LEVEL SELECT (L)</button>
     </div>
   </div>
 </div>
