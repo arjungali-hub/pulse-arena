@@ -1515,11 +1515,12 @@ muteBtn.addEventListener('click', ()=>{
 // fixed string — this resolves either form for display
 function resolveDesc(u){ return typeof u.desc==='function' ? u.desc() : u.desc; }
 
-// generic upgrades (both modes): Decoy and Undertow are pure utility/repositioning, not
-// projectile-destruction, so they're fine everywhere. Everything that destroys shots as its
-// whole point (Wall, Nova, Scorch Trail, Deflector Field) is levels-only — that's what
-// actually helps clear a level, and it'd be a dead pick in endless where severing doesn't
-// exist. Endless gets its own replacements instead, further down.
+// generic upgrades (both modes): Decoy is pure utility/repositioning, not projectile-
+// destruction, so it's fine everywhere. Everything that destroys shots as its whole point
+// (Wall, Nova, Scorch Trail, Deflector Field) is levels-only — that's what actually helps
+// clear a level, and it'd be a dead pick in endless where severing doesn't exist. Undertow
+// is also levels-only: dragging shots toward you while slowed is a severing setup, which
+// endless has no use for. Endless gets its own replacements instead, further down.
 function buildUpgradePool(){
   const pool = [
     { id:'wall', name:'Barrier Wall', endlessEligible:false,
@@ -1542,7 +1543,7 @@ function buildUpgradePool(){
       desc:'Dashing leaves a brief trail that destroys any shot it touches, chipping the core for each one.',
       eligible:()=> !player.up.dashTrail,
       apply:()=>{ player.up.dashTrail = 1; } },
-    { id:'slowPull', name:'Undertow',
+    { id:'slowPull', name:'Undertow', endlessEligible:false,
       desc:'While Slow-Mo is active, nearby shots are dragged toward you.',
       eligible:()=> !player.up.slowPull,
       apply:()=>{ player.up.slowPull = 1; } },
