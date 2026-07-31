@@ -198,9 +198,9 @@
   }
   .bind-row .bind-btn:hover{ background:rgba(91,227,255,.12); }
   .bind-row .bind-btn.listening{ border-color:var(--orange); color:var(--orange); background:rgba(255,171,74,.12); }
-  .mode-cards{ display:flex; gap:16px; justify-content:center; flex-wrap:wrap; margin-top:14px; }
+  .mode-cards{ display:flex; gap:22px; justify-content:center; flex-wrap:wrap; margin-top:14px; }
   .mode-card{
-    width:280px; padding:22px 20px; border-radius:18px; cursor:pointer; text-align:left;
+    width:340px; padding:30px 26px; border-radius:22px; cursor:pointer; text-align:left;
     background:rgba(255,255,255,.03); border:1.5px solid rgba(255,255,255,.14);
     pointer-events:auto; transition:transform .15s ease, border-color .15s ease, background .15s ease;
   }
@@ -209,11 +209,11 @@
   .mode-card.levels:hover{ border-color:var(--cyan); background:rgba(91,227,255,.08); }
   .mode-card.endless{ border-color:rgba(255,91,216,.35); }
   .mode-card.endless:hover{ border-color:var(--magenta); background:rgba(255,91,216,.08); }
-  .mode-card-title{ font-size:24px; font-weight:800; margin-bottom:6px; }
+  .mode-card-title{ font-size:30px; font-weight:800; margin-bottom:8px; }
   .mode-card.levels .mode-card-title{ color:var(--cyan); text-shadow:0 0 14px rgba(91,227,255,.5); }
   .mode-card.endless .mode-card-title{ color:var(--magenta); text-shadow:0 0 14px rgba(255,91,216,.5); }
-  .mode-card-desc{ font-size:12.5px; color:var(--dim); line-height:1.4; margin-bottom:12px; }
-  .mode-card-features{ margin:0; padding-left:18px; font-size:11.5px; color:var(--dim); line-height:1.7; }
+  .mode-card-desc{ font-size:14.5px; color:var(--dim); line-height:1.45; margin-bottom:14px; }
+  .mode-card-features{ margin:0; padding-left:20px; font-size:13px; color:var(--dim); line-height:1.8; }
 
   .cta{
     font-size:15px; color:var(--text); background:rgba(91,227,255,.12);
@@ -286,7 +286,7 @@
   .level-tile .stars{ font-size:clamp(15px,1.6vw,22px); letter-spacing:3px; }
   .level-tile .star-filled{ color:var(--neon); text-shadow:0 0 8px var(--neon); }
   .level-tile .star-empty{ color:rgba(255,255,255,.15); }
-  .level-tile .lt-lock{ font-size:0.55em; text-shadow:none; vertical-align:middle; }
+  .level-tile .lt-lock{ font-size:1.15em; text-shadow:none; vertical-align:middle; filter:grayscale(1) brightness(1.4); }
   .level-tile .target-time{ font-size:clamp(10px,1vw,13px); font-weight:400; color:var(--dim); text-shadow:none; letter-spacing:.02em; line-height:1.5; }
   .level-tile .target-time b{ color:var(--neon); font-weight:700; text-shadow:0 0 6px var(--neon); }
 
@@ -366,9 +366,6 @@
   <div class="panel wide">
     <div class="title">Pulse Arena</div>
     <div class="subtitle">Dodge the core. Destroy it to clear a level — or survive forever in Endless.</div>
-    <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:8px;">
-      <button class="cta ghost" id="howToPlayBtn">HOW TO PLAY</button>
-    </div>
     <div class="mode-cards">
       <div class="mode-card levels" id="continueBtn">
         <div class="mode-card-title">Levels</div>
@@ -389,8 +386,12 @@
         </ul>
       </div>
     </div>
-    <div style="margin-top:18px;"><button class="cta ghost" id="testModeBtn">TEST MODE: OFF</button></div>
-    <div style="margin-top:22px;"><button class="cta ghost" id="controlsBtn">CONTROLS</button></div>
+    <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:22px;">
+      <button class="cta ghost" id="howToPlayBtn">HOW TO PLAY</button>
+      <button class="cta ghost" id="controlsBtn">CONTROLS</button>
+      <button class="cta ghost" id="testModeBtn">TEST MODE: OFF</button>
+      <button class="cta ghost" id="muteBtn">MUSIC: ON</button>
+    </div>
   </div>
 </div>
 
@@ -624,7 +625,7 @@ window.addEventListener('keydown', (e)=>{
     if(k==='z') choosePendingUpgrade(0);
     else if(k==='x') choosePendingUpgrade(1);
     else if(k==='c') choosePendingUpgrade(2);
-  } else if(state==='gameover'){
+  } else if(state==='gameover' && !inTutorialLevel){
     if(k==='l'){ if(gameMode==='endless') showMenu(); else showLevelSelect(); }
     else if(k==='r' && (!levelWon || canRetryWin)){ if(gameMode==='endless') startEndless(); else startLevel(currentLevel); }
     else if(k===' ' || k==='enter'){
@@ -809,7 +810,6 @@ function upgradeCountLabel(u){
 function reflexCdCut(){ return gameMode==='levels' ? 0.20 : 0.15; }
 function legsSpeedBonus(){ return gameMode==='levels' ? 0.22 : 0.15; }
 function slimHitboxCut(){ return gameMode==='levels' ? 0.16 : 0.12; }
-function extraJumpCap(){ return gameMode==='levels' ? 2 : 1; }
 
 function jumpDurMax(){ return ABILITY.JUMP_DUR; }
 const JUMP_CD_FLOOR = 0.5, DASH_CD_FLOOR = 0.5; // hard minimums so stacked reflex upgrades can never produce near-permanent i-frames
@@ -828,9 +828,11 @@ function jumpLaunchVZ(){ return jumpGravity()*jumpDurMax()/2; }
 function dashCdMax(){ return Math.max(ABILITY.DASH_CD * (1 - player.up.reflex*reflexCdCut()), DASH_CD_FLOOR); }
 function slowEnergyMax(){ return 100 + (player.up.slowMaxBoost||0)*30; } // Overcharge (endless-only)
 function slowRegenRate(){ return ABILITY.SLOW_REGEN; }
-function slowDrainRate(){ return ABILITY.SLOW_DRAIN * (1 - (player.up.slowEfficiency||0)*0.15); } // Conservation (endless-only)
+// Conservation and Slim Profile have no stack limit, so their cut fractions are clamped well
+// short of 1 — otherwise enough stacks would drive drain rate or hitbox size to zero or negative
+function slowDrainRate(){ return ABILITY.SLOW_DRAIN * (1 - Math.min((player.up.slowEfficiency||0)*0.15, 0.85)); } // Conservation (endless-only)
 function moveSpeedMult(){ return 1 + player.up.legs*legsSpeedBonus(); }
-function updatePlayerRadius(){ player.r = playerBaseR() * (1 - player.up.slim*slimHitboxCut()); }
+function updatePlayerRadius(){ player.r = playerBaseR() * (1 - Math.min(player.up.slim*slimHitboxCut(), 0.85)); }
 
 function resetPlayer(){
   player.up = { legs:0, reflex:0, slim:0, reflectSever:0, dashTrail:0, slowPull:0, extraJump:0, shieldCharge:0, scoreMult:0, slowMaxBoost:0, slowEfficiency:0 };
@@ -1270,6 +1272,95 @@ function chromaBurst(){
   setTimeout(()=>canvas.classList.remove('chroma-split'), 70);
 }
 
+// ================= MUSIC =================
+// procedural, generated entirely with the Web Audio API — no external audio assets, matching
+// the single-file/zero-dependency rule everything else in this project follows. an ambient
+// drone plays continuously, plus a low "thump" timed to land exactly on the same sine wave
+// that drives the core's visual pulse (see drawCore()'s `pulse` calc), so the beat and the
+// core's breathing are always in lockstep rather than two clocks drifting apart over time.
+const MUSIC_MUTED_KEY = 'pulseArenaMusicMuted';
+let audioCtx = null;
+let musicGain = null;
+let musicMuted = localStorage.getItem(MUSIC_MUTED_KEY) === '1';
+let dronePad = null;
+let lastPulseSin = 0;
+
+function ensureAudio(){
+  if(audioCtx) return;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if(!Ctx) return; // unsupported browser — music is a nice-to-have, never block play over it
+  audioCtx = new Ctx();
+  musicGain = audioCtx.createGain();
+  musicGain.gain.value = musicMuted ? 0 : 0.35;
+  musicGain.connect(audioCtx.destination);
+  startDrone();
+}
+// browsers block audio until a real user gesture — the very first click or keypress
+// anywhere starts it, whatever that click/keypress happened to be for
+window.addEventListener('pointerdown', ensureAudio, { once:true });
+window.addEventListener('keydown', ensureAudio, { once:true });
+
+// a soft sustained pad underneath everything — three low, slightly detuned sine layers
+function startDrone(){
+  const freqs = [55, 110, 164.81]; // A1, A2, E3
+  dronePad = { oscs:[], gains:[] };
+  for(const f of freqs){
+    const osc = audioCtx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = f;
+    const g = audioCtx.createGain();
+    g.gain.value = 0.05;
+    osc.connect(g); g.connect(musicGain);
+    osc.start();
+    dronePad.oscs.push(osc); dronePad.gains.push(g);
+  }
+}
+
+// one percussive low thump per core-pulse cycle — pitch drops fast, envelope is a quick
+// attack and a longer decay, like a heartbeat rather than a click
+function playCoreThump(intensity){
+  if(!audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(90, t);
+  osc.frequency.exponentialRampToValueAtTime(42, t+0.28);
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t); // avoid a click, then ramp for real below
+  g.gain.exponentialRampToValueAtTime(0.5*intensity, t+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+0.38);
+  osc.connect(g); g.connect(musicGain);
+  osc.start(t); osc.stop(t+0.4);
+}
+
+// called once per frame with the same `elapsed` that drives the core's visual pulse —
+// fires the thump the instant that sine wave crosses from falling to rising, i.e. once
+// per pulse cycle, exactly when the core visually starts swelling again
+function updateMusic(){
+  if(!audioCtx) return;
+  const pulseSin = Math.sin(elapsed*3.2);
+  if(pulseSin>0 && lastPulseSin<=0){
+    playCoreThump(corePhase>=2 ? 1.3 : 1);
+  }
+  lastPulseSin = pulseSin;
+}
+
+function setMusicMuted(muted){
+  musicMuted = muted;
+  localStorage.setItem(MUSIC_MUTED_KEY, muted ? '1' : '0');
+  if(musicGain) musicGain.gain.value = muted ? 0 : 0.35;
+}
+
+const muteBtn = document.getElementById('muteBtn');
+muteBtn.textContent = 'MUSIC: ' + (musicMuted ? 'OFF' : 'ON');
+muteBtn.classList.toggle('on', musicMuted);
+muteBtn.addEventListener('click', ()=>{
+  setMusicMuted(!musicMuted);
+  muteBtn.textContent = 'MUSIC: ' + (musicMuted ? 'OFF' : 'ON');
+  muteBtn.classList.toggle('on', musicMuted);
+});
+
 // ================= UPGRADES / LEVEL-UP =================
 // a few upgrades' numbers depend on gameMode, so their desc is a function instead of a
 // fixed string — this resolves either form for display
@@ -1307,20 +1398,20 @@ function buildUpgradePool(){
       eligible:()=> !player.up.slowPull,
       apply:()=>{ player.up.slowPull = 1; } },
     { id:'extraJump', name:'Second Wind',
-      desc:()=> '+1 Jump charge (up to '+extraJumpCap()+') — bank an extra hop.',
-      eligible:()=> (player.up.extraJump||0) < extraJumpCap(),
+      desc:()=> '+1 Jump charge — bank an extra hop. No stack limit.',
+      eligible:()=> true,
       apply:()=>{ player.up.extraJump = (player.up.extraJump||0)+1; } },
     { id:'legs', name:'Quick Legs',
-      desc:()=> '+'+Math.round(legsSpeedBonus()*100)+'% move speed.',
-      eligible:()=> player.up.legs<3,
+      desc:()=> '+'+Math.round(legsSpeedBonus()*100)+'% move speed. No stack limit.',
+      eligible:()=> true,
       apply:()=>{ player.up.legs++; } },
     { id:'reflex', name:'Rapid Reflexes',
-      desc:()=> '-'+Math.round(reflexCdCut()*100)+'% Jump & Dash cooldown.',
-      eligible:()=> player.up.reflex<3,
+      desc:()=> '-'+Math.round(reflexCdCut()*100)+'% Jump & Dash cooldown. No stack limit.',
+      eligible:()=> true,
       apply:()=>{ player.up.reflex++; } },
     { id:'slim', name:'Slim Profile',
-      desc:()=> '-'+Math.round(slimHitboxCut()*100)+'% hitbox size.',
-      eligible:()=> player.up.slim<2,
+      desc:()=> '-'+Math.round(slimHitboxCut()*100)+'% hitbox size. No stack limit.',
+      eligible:()=> true,
       apply:()=>{ player.up.slim++; updatePlayerRadius(); } },
     // ---- endless-only replacements for the projectile-destroying upgrades above ----
     { id:'shieldCharge', name:'Second Chance', levelsEligible:false,
@@ -1328,16 +1419,16 @@ function buildUpgradePool(){
       eligible:()=> (player.up.shieldCharge||0) < 2,
       apply:()=>{ player.up.shieldCharge = (player.up.shieldCharge||0)+1; } },
     { id:'scoreMult', name:'Adrenaline Rush', levelsEligible:false,
-      desc:'+20% score gain. Stacks up to 3 times.',
-      eligible:()=> (player.up.scoreMult||0) < 3,
+      desc:'+20% score gain. No stack limit.',
+      eligible:()=> true,
       apply:()=>{ player.up.scoreMult = (player.up.scoreMult||0)+1; } },
     { id:'slowMaxBoost', name:'Overcharge', levelsEligible:false,
-      desc:'+30 max Slow-Mo energy. Stacks up to 2 times.',
-      eligible:()=> (player.up.slowMaxBoost||0) < 2,
+      desc:'+30 max Slow-Mo energy. No stack limit.',
+      eligible:()=> true,
       apply:()=>{ player.up.slowMaxBoost = (player.up.slowMaxBoost||0)+1; } },
     { id:'slowEfficiency', name:'Conservation', levelsEligible:false,
-      desc:'-15% Slow-Mo drain rate. Stacks up to 2 times.',
-      eligible:()=> (player.up.slowEfficiency||0) < 2,
+      desc:'-15% Slow-Mo drain rate. No stack limit.',
+      eligible:()=> true,
       apply:()=>{ player.up.slowEfficiency = (player.up.slowEfficiency||0)+1; } }
   ];
   return pool.filter(u => gameMode==='endless' ? u.endlessEligible!==false : u.levelsEligible!==false);
@@ -1442,10 +1533,18 @@ function diffLevel(){
   return gameMode==='endless' ? Math.min(MAX_LEVEL, 1+Math.floor(elapsed/25)) : currentLevel;
 }
 
-// the speed/rate/count curves read this instead of the raw level — halved, so level 20
-// now lands where level 10 used to, spreading the same difficulty ramp across twice the levels
-// level 20 (and the run-up to it) should be a lot harder than early levels — no halving here
-function effectiveDiffLevel(){ return diffLevel(); }
+// the speed/rate/count curves read this instead of the raw level. A straight linear ramp
+// made the middle levels (~7-14) feel like a difficulty wall, so this curves the ramp
+// instead — slow through the early/middle levels, only steepening in the last stretch —
+// and levels at or after DIFF_CURVE_CAP_LEVEL are all pinned to the same top difficulty
+// rather than continuing to escalate.
+const DIFF_CURVE_CAP_LEVEL = 16; // levels at/after this share the same (highest) difficulty
+const DIFF_CURVE_EXP = 2.4; // >1 = slow start, steep finish
+function effectiveDiffLevel(){
+  const lvl = Math.min(diffLevel(), DIFF_CURVE_CAP_LEVEL);
+  const t = (lvl-1) / (DIFF_CURVE_CAP_LEVEL-1);
+  return 1 + Math.pow(t, DIFF_CURVE_EXP) * (DIFF_CURVE_CAP_LEVEL-1);
+}
 
 function speedMult(){
   const perLevel = (effectiveDiffLevel()-1)*0.08;
@@ -2282,6 +2381,7 @@ function registerSever(p){
 
 function damageCore(amount){
   if(gameMode==='endless') return; // endless has no core-kill win condition, so the core doesn't take damage
+  if(testMode) return; // test mode is a sandbox — severs still count, but the core is never actually hurt
   if(coreHP<=0) return;
   // the tutorial's Level 1 attempt is rigged to be unwinnable — you can still feel the core
   // taking damage, it just never actually reaches 0
@@ -3005,6 +3105,7 @@ function frame(now){
     shakeT -= dt;
     if(shakeT<=0){ shakeT=0; shakeMag=0; shakeMax=0; } // reset fully once a shake naturally ends
   }
+  updateMusic();
   updateHud();
   render();
   requestAnimationFrame(frame);
