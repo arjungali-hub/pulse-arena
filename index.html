@@ -1291,8 +1291,13 @@ function ensureAudio(){
   if(!Ctx) return; // unsupported browser — music is a nice-to-have, never block play over it
   audioCtx = new Ctx();
   musicGain = audioCtx.createGain();
-  musicGain.gain.value = musicMuted ? 0 : 0.7;
-  musicGain.connect(audioCtx.destination);
+  musicGain.gain.value = musicMuted ? 0 : 2.1;
+  // gain this high would otherwise hard-clip into harsh digital distortion — a limiter
+  // right before the destination keeps it loud without the crackle
+  const limiter = audioCtx.createDynamicsCompressor();
+  limiter.threshold.value = -8; limiter.knee.value = 6; limiter.ratio.value = 14;
+  limiter.attack.value = 0.003; limiter.release.value = 0.1;
+  musicGain.connect(limiter); limiter.connect(audioCtx.destination);
   startDrone();
 }
 // browsers block audio until a real user gesture — the very first click or keypress
@@ -1309,7 +1314,7 @@ function startDrone(){
     osc.type = 'sine';
     osc.frequency.value = f;
     const g = audioCtx.createGain();
-    g.gain.value = 0.11;
+    g.gain.value = 0.33;
     osc.connect(g); g.connect(musicGain);
     osc.start();
     dronePad.oscs.push(osc); dronePad.gains.push(g);
@@ -1328,7 +1333,7 @@ function playCoreThump(intensity){
   const g = audioCtx.createGain();
   g.gain.setValueAtTime(0.0001, t);
   g.gain.exponentialRampToValueAtTime(0.001, t); // avoid a click, then ramp for real below
-  g.gain.exponentialRampToValueAtTime(0.85*intensity, t+0.02);
+  g.gain.exponentialRampToValueAtTime(2.55*intensity, t+0.02);
   g.gain.exponentialRampToValueAtTime(0.0001, t+0.38);
   osc.connect(g); g.connect(musicGain);
   osc.start(t); osc.stop(t+0.4);
@@ -1349,7 +1354,7 @@ function updateMusic(){
 function setMusicMuted(muted){
   musicMuted = muted;
   localStorage.setItem(MUSIC_MUTED_KEY, muted ? '1' : '0');
-  if(musicGain) musicGain.gain.value = muted ? 0 : 0.7;
+  if(musicGain) musicGain.gain.value = muted ? 0 : 2.1;
 }
 
 const muteBtn = document.getElementById('muteBtn');
