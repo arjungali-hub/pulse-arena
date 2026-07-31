@@ -150,12 +150,30 @@
   }
   .instr.concept .d{ font-size:13px; }
 
+  .tutorial-dots{ display:flex; gap:7px; justify-content:center; margin-bottom:16px; }
+  .tutorial-dots .dot{
+    width:8px; height:8px; border-radius:50%; background:rgba(255,255,255,.15);
+    transition:background .2s ease, box-shadow .2s ease;
+  }
+  .tutorial-dots .dot.active{ background:var(--cyan); box-shadow:0 0 8px rgba(91,227,255,.8); }
+  .tutorial-dots .dot.done{ background:rgba(91,227,255,.4); }
+  .tutorial-badge{
+    display:inline-block; margin:0 auto 6px; padding:4px 14px; border-radius:20px;
+    font-size:11px; font-weight:800; letter-spacing:.12em;
+    background:rgba(91,227,255,.1); border:1px solid rgba(91,227,255,.35); color:var(--cyan);
+  }
+  .tutorial-badge.endless{ background:rgba(255,91,216,.1); border-color:rgba(255,91,216,.35); color:var(--magenta); }
   .tutorial-body{ text-align:left; font-size:14px; color:var(--dim); line-height:1.55; margin-top:10px; }
   .tutorial-body b{ color:var(--text); }
   .tutorial-body .instructions{ margin:14px 0 4px; }
   .tutorial-body .instr{ width:150px; }
   .tutorial-body p{ margin:0 0 10px; }
   .tutorial-body p:last-child{ margin-bottom:0; }
+  .tutorial-skip{
+    margin-top:16px; font-size:11.5px; color:var(--dim); text-decoration:underline;
+    cursor:pointer; opacity:.7; transition:opacity .12s ease;
+  }
+  .tutorial-skip:hover{ opacity:1; }
 
   .bind-list{ display:flex; flex-direction:column; gap:8px; margin:18px 0; text-align:left; }
   .bind-row{
@@ -354,9 +372,16 @@
 
 <div class="overlay hidden" id="tutorialOverlay">
   <div class="panel wide">
+    <div class="tutorial-dots" id="tutorialDots"></div>
+    <div class="tutorial-badge" id="tutorialBadge">LEVELS MODE</div>
     <div class="title" id="tutorialTitle" style="font-size:34px;">Welcome</div>
     <div class="tutorial-body" id="tutorialBody"></div>
-    <button class="cta" id="tutorialContinueBtn" style="margin-top:18px;">CONTINUE</button>
+    <div id="tutorialSlideNav" style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:18px;">
+      <button class="cta ghost" id="tutorialBackBtn" style="min-width:120px;">BACK</button>
+      <button class="cta" id="tutorialNextBtn" style="min-width:120px;">NEXT</button>
+    </div>
+    <div class="tutorial-skip" id="tutorialSkipBtn">Skip tutorial</div>
+    <button class="cta" id="tutorialContinueBtn" style="margin-top:18px; display:none;">CONTINUE</button>
   </div>
 </div>
 
@@ -868,42 +893,101 @@ function showLevelSelect(){
 }
 
 // ================= FIRST-RUN TUTORIAL =================
-// a short hands-on intro shown in place of the old static intro page the very first time
-// the game loads: a welcome screen, a brief heads-up, then an actual live attempt at Level 1
-// (rigged so it can't be won — it's just there to get a feel for dodging and severing),
-// then a wrap-up screen before dropping into the normal menu. The original intro content
-// still exists, just moved behind the "HOW TO PLAY" button for anyone who wants it later.
+// a guided walkthrough shown in place of the old static intro page the very first time the
+// game loads — Levels mode slides, then a hands-on practice attempt at Level 1 (rigged so it
+// can't actually be won — it's just there to get a feel for dodging and severing), then
+// Endless mode slides, ending by dropping the player straight into an Endless run. The
+// original intro content still exists, just moved behind the "HOW TO PLAY" button.
 const TUTORIAL_SEEN_KEY = 'pulseArenaTutorialSeen';
-const TUTORIAL_LEVEL_TIME_LIMIT = 25; // seconds — the tutorial attempt is cut short even if you never die
+const TUTORIAL_LEVEL_TIME_LIMIT = 25; // seconds — the practice attempt is cut short even if you never die
 let inTutorialLevel = false;
+const TUTORIAL_SLIDES = [
+  { mode:'levels', title:'Welcome to Pulse Arena', body:
+    '<p>A pulsing <b>core</b> sits at the center of the arena, constantly firing waves of projectiles outward. Your ship weaves through them using a small kit of dodges and abilities — and, in Levels mode, uses that same kit to fight back.</p>'+
+    '<p>This walkthrough covers <b>Levels mode</b> first, then <b>Endless mode</b>. Let\'s start with the basics.</p>' },
+  { mode:'levels', title:'Movement & Dodging', body:
+    '<div class="instructions">'+
+      '<div class="instr"><span class="k">WASD</span><div class="d">Move around the arena (arrow keys also work)</div></div>'+
+      '<div class="instr"><span class="k">SPACE</span><div class="d">Jump — hop over <b>ground</b> shots. Locks your direction until you land: a committed dodge, not free movement.</div></div>'+
+      '<div class="instr"><span class="k">SHIFT</span><div class="d">Dash — a quick burst of speed with full invulnerability. Can\'t be used mid-jump.</div></div>'+
+    '</div>' },
+  { mode:'levels', title:'Slow-Mo & Severing', body:
+    '<p><b>E — Slow-Mo:</b> press to slow every projectile in the arena. It runs on its own until the energy drains out, or press <b>E</b> again to cancel early. Energy regenerates over time.</p>'+
+    '<p><b>Severing:</b> every shot trails a tail behind it. Cutting through that tail destroys the shot and chips the core\'s health — it\'s your main way to damage the core.</p>' },
+  { mode:'levels', title:'Destroying the Core', body:
+    '<p>There\'s no timer in Levels mode. A level ends the instant the core\'s health hits zero — so the whole goal is to sever as many shots as you safely can.</p>'+
+    '<p>Along the way you\'ll get recurring <b>upgrade picks</b>: some are stat boosts, others unlock whole new abilities on <b>Q</b>, <b>F</b>, and <b>R</b>. Your build resets at the start of every level, so each run is a fresh set of choices.</p>' },
+  { mode:'levels', title:'Level Select & Stars', body:
+    '<p>There are <b>20 levels</b>, each harder than the last. Clearing one unlocks the next.</p>'+
+    '<p>Every level tracks your best clear time and awards <b>1 to 3 stars</b> for it — the faster you destroy the core, the more you earn. Just beating a level is worth a star; speed-running it is worth all three.</p>' },
+  { mode:'endless', title:'Endless Mode', body:
+    '<p>Endless drops the core entirely — there\'s nothing to destroy, and nothing to sever. Instead, you just <b>survive as long as you possibly can</b>.</p>'+
+    '<p>The arena keeps getting harder the longer you last, using the same movement, jump, dash, and slow-mo you just learned. Score climbs continuously as you survive, scaled by how far in you are.</p>' },
+  { mode:'endless', title:'Endless-Only Upgrades', body:
+    '<p>With no core to damage, Endless swaps in upgrades built for pure survival instead:</p>'+
+    '<div class="instructions">'+
+      '<div class="instr"><span class="k">🛡</span><div class="d"><b>Second Chance</b> — absorbs one hit that would end your run, at the cost of a chunk of your score.</div></div>'+
+      '<div class="instr"><span class="k">⚡</span><div class="d"><b>Adrenaline Rush</b> — boosts your score gain.</div></div>'+
+      '<div class="instr"><span class="k">⏳</span><div class="d"><b>Overcharge</b> — raises your max Slow-Mo energy.</div></div>'+
+      '<div class="instr"><span class="k">🌀</span><div class="d"><b>Conservation</b> — Slow-Mo drains slower.</div></div>'+
+    '</div>'+
+    '<p>Just like Levels, your build resets at the start of every run — so every attempt is a fresh set of picks.</p>' },
+  { mode:'endless', title:'Ready?', body:
+    '<p>That\'s everything you need to get started. Let\'s put it to use — your first run starts now, in <b>Endless mode</b>. Good luck out there.</p>', cta:'START ENDLESS RUN' }
+];
+const TUTORIAL_PRACTICE_AFTER_SLIDE = 4; // index of the last Levels-chapter slide — practice slots in right after it
+let tutorialIndex = 0;
 
-// swaps in fresh title/body/button content and (via cloning) a fresh click handler, so each
-// tutorial screen can't accidentally trigger the previous screen's action
-function showTutorialScreen(title, body, btnLabel, onContinue){
+function renderTutorialSlide(){
+  document.getElementById('tutorialDots').style.display = '';
+  document.getElementById('tutorialBadge').style.display = '';
+  document.getElementById('tutorialSlideNav').style.display = '';
+  document.getElementById('tutorialSkipBtn').style.display = '';
+  document.getElementById('tutorialContinueBtn').style.display = 'none';
+  const slide = TUTORIAL_SLIDES[tutorialIndex];
+  const badge = document.getElementById('tutorialBadge');
+  badge.textContent = slide.mode==='endless' ? 'ENDLESS MODE' : 'LEVELS MODE';
+  badge.classList.toggle('endless', slide.mode==='endless');
+  document.getElementById('tutorialTitle').textContent = slide.title;
+  document.getElementById('tutorialBody').innerHTML = slide.body;
+  document.getElementById('tutorialBackBtn').style.display = tutorialIndex===0 ? 'none' : '';
+  document.getElementById('tutorialNextBtn').textContent = slide.cta || 'NEXT';
+  document.getElementById('tutorialDots').innerHTML = TUTORIAL_SLIDES.map((_,i)=>
+    '<div class="dot'+(i===tutorialIndex ? ' active' : i<tutorialIndex ? ' done' : '')+'"></div>'
+  ).join('');
+}
+
+function showTutorial(){
+  tutorialIndex = 0;
+  document.getElementById('menuOverlay').classList.add('hidden');
+  document.getElementById('tutorialOverlay').classList.remove('hidden');
+  renderTutorialSlide();
+}
+
+// the hands-on Level 1 practice: a brief heads-up, then an actual live attempt (rigged so it
+// can't be won), then a short breather before the slides resume with the Endless chapter.
+// Swaps in fresh title/body/button content and (via cloning) a fresh click handler, so each
+// practice screen can't accidentally trigger the previous screen's action.
+function showPracticeScreen(title, body, btnLabel, onContinue){
+  document.getElementById('tutorialDots').style.display = 'none';
+  document.getElementById('tutorialBadge').style.display = 'none';
+  document.getElementById('tutorialSlideNav').style.display = 'none';
+  document.getElementById('tutorialSkipBtn').style.display = 'none';
   document.getElementById('tutorialTitle').textContent = title;
   document.getElementById('tutorialBody').innerHTML = body;
   const oldBtn = document.getElementById('tutorialContinueBtn');
   const btn = oldBtn.cloneNode(true);
   oldBtn.parentNode.replaceChild(btn, oldBtn);
   btn.textContent = btnLabel;
+  btn.style.display = '';
   btn.addEventListener('click', onContinue);
   document.getElementById('menuOverlay').classList.add('hidden');
   document.getElementById('goOverlay').classList.add('hidden');
   document.getElementById('tutorialOverlay').classList.remove('hidden');
 }
 
-function showTutorial(){
-  showTutorialScreen(
-    'Welcome to Pulse Arena',
-    '<p>A pulsing <b>core</b> sits at the center of the arena, constantly firing waves of projectiles outward. Your ship weaves through them using a small kit of dodges and abilities — and uses that same kit to fight back.</p>'+
-    '<p>Let\'s get you moving.</p>',
-    'CONTINUE',
-    showTutorialBriefing
-  );
-}
-
 function showTutorialBriefing(){
-  showTutorialScreen(
+  showPracticeScreen(
     "Let's Try Level 1",
     '<div class="instructions">'+
       '<div class="instr"><span class="k">WASD</span><div class="d">Move (arrow keys work too)</div></div>'+
@@ -923,22 +1007,28 @@ function beginTutorialLevel(){
   startLevel(1);
 }
 
-// called instead of the normal result screen once the rigged tutorial attempt ends,
+// called instead of the normal result screen once the rigged practice attempt ends,
 // whichever way it ends (death or running out the clock)
 function endTutorialLevel(){
   inTutorialLevel = false;
-  showTutorialScreen(
-    "You're Ready",
-    '<p>That\'s the feel of it. From here on, it\'s up to you — take on any level, dive into Endless mode, rebind your keys, or just keep exploring. However you want to play.</p>',
+  showPracticeScreen(
+    'Nice Work',
+    '<p>That\'s the feel of dodging and severing. Let\'s cover <b>Endless mode</b> next.</p>',
     'CONTINUE',
-    finishTutorial
+    resumeTutorialAfterPractice
   );
 }
 
-function finishTutorial(){
+function resumeTutorialAfterPractice(){
+  tutorialIndex = TUTORIAL_PRACTICE_AFTER_SLIDE + 1;
+  renderTutorialSlide();
+}
+
+function endTutorial(startRun){
   localStorage.setItem(TUTORIAL_SEEN_KEY, '1');
   document.getElementById('tutorialOverlay').classList.add('hidden');
-  showMenu();
+  if(startRun) startEndless();
+  else showMenu();
 }
 
 function setPaused(p){
@@ -1104,6 +1194,16 @@ document.getElementById('closeHowToPlayBtn').addEventListener('click', ()=>{
   document.getElementById('howToPlayOverlay').classList.add('hidden');
   document.getElementById('menuOverlay').classList.remove('hidden');
 });
+document.getElementById('tutorialNextBtn').addEventListener('click', ()=>{
+  if(tutorialIndex === TUTORIAL_PRACTICE_AFTER_SLIDE){ showTutorialBriefing(); return; }
+  if(tutorialIndex >= TUTORIAL_SLIDES.length-1){ endTutorial(true); return; }
+  tutorialIndex++;
+  renderTutorialSlide();
+});
+document.getElementById('tutorialBackBtn').addEventListener('click', ()=>{
+  if(tutorialIndex>0){ tutorialIndex--; renderTutorialSlide(); }
+});
+document.getElementById('tutorialSkipBtn').addEventListener('click', ()=> endTutorial(false));
 
 document.getElementById('testModeBtn').addEventListener('click', ()=>{
   testMode = !testMode;
