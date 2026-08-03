@@ -227,6 +227,39 @@
   }
   @keyframes coach-hl{ 0%,100%{ opacity:.4; } 50%{ opacity:1; } }
 
+  /* ---- PvP two-player HUD (top-left P1, top-right P2) ---- */
+  .pvp-hud{ position:fixed; top:16px; left:0; right:0; display:flex; justify-content:space-between;
+            padding:0 20px; pointer-events:none; z-index:20; }
+  .pvp-hud.hidden{ display:none; }
+  .pvp-panel{ min-width:180px; padding:10px 14px; border-radius:12px; text-align:left;
+              background:rgba(8,11,20,.7); border:1.5px solid var(--p1, #5be3ff); }
+  .pvp-panel.right{ text-align:right; border-color:var(--p2, #ff5bd8); }
+  .pvp-name{ font-size:12px; font-weight:800; letter-spacing:.12em; color:var(--p1,#5be3ff); }
+  .pvp-panel.right .pvp-name{ color:var(--p2,#ff5bd8); }
+  .pvp-stat{ font-size:20px; font-weight:800; margin:2px 0 6px; color:var(--text); }
+  .pvp-stat.out{ color:var(--dim); }
+  .pvp-bar{ height:6px; border-radius:4px; background:rgba(255,255,255,.1); overflow:hidden; }
+  .pvp-panel.right .pvp-bar{ transform:scaleX(-1); }
+  .pvp-bar-fill{ height:100%; width:100%; background:var(--p1,#5be3ff); transition:width .1s linear; }
+  .pvp-panel.right .pvp-bar-fill{ background:var(--p2,#ff5bd8); }
+
+  /* ---- PvP sub-mode + result cards ---- */
+  .pvp-opt-cards{ display:flex; gap:22px; justify-content:center; flex-wrap:wrap; margin:18px 0 10px; }
+  .pvp-opt{ width:300px; padding:26px 22px; border-radius:20px; cursor:pointer; text-align:left;
+            background:rgba(255,255,255,.03); border:1.5px solid rgba(255,255,255,.16);
+            pointer-events:auto; transition:transform .15s ease, border-color .15s ease, background .15s ease; }
+  .pvp-opt:hover{ transform:translateY(-3px); border-color:var(--magenta); background:rgba(255,91,216,.07); }
+  .pvp-opt-title{ font-size:26px; font-weight:800; margin-bottom:8px; color:var(--magenta);
+                  text-shadow:0 0 14px rgba(255,91,216,.5); }
+  .pvp-opt-desc{ font-size:13.5px; color:var(--dim); line-height:1.5; }
+  .pvp-controls{ display:flex; gap:22px; justify-content:center; flex-wrap:wrap; margin:6px 0 4px; }
+  .pvp-ctrl-col{ font-size:12px; color:var(--dim); line-height:1.8; text-align:left; }
+  .pvp-ctrl-col b{ color:var(--text); }
+  .pvp-ctrl-col .who{ font-weight:800; letter-spacing:.1em; font-size:12.5px; }
+  .pvp-ctrl-col.p1 .who{ color:var(--cyan); }
+  .pvp-ctrl-col.p2 .who{ color:var(--magenta); }
+  .pvp-winner{ font-size:44px; font-weight:800; letter-spacing:.04em; margin-bottom:4px; }
+
   .bind-list{ display:flex; flex-direction:column; gap:8px; margin:18px 0; text-align:left; }
   .bind-row{
     display:flex; align-items:center; justify-content:space-between; gap:14px;
@@ -410,6 +443,18 @@
       <div class="ability decoy locked" id="abDecoy"><div class="fill" id="fillDecoy"></div><div class="cdnum" id="cdDecoy"></div><div class="glyph">🎯</div><div class="key" id="keyLabelAbility5">R</div><div class="name">Decoy</div></div>
     </div>
   </div>
+  <div class="pvp-hud hidden" id="pvpHud">
+    <div class="pvp-panel" id="pvpPanelP1">
+      <div class="pvp-name" id="pvpNameP1">PLAYER 1</div>
+      <div class="pvp-stat" id="pvpStatP1">—</div>
+      <div class="pvp-bar"><div class="pvp-bar-fill" id="pvpSlowP1"></div></div>
+    </div>
+    <div class="pvp-panel right" id="pvpPanelP2">
+      <div class="pvp-name" id="pvpNameP2">PLAYER 2</div>
+      <div class="pvp-stat" id="pvpStatP2">—</div>
+      <div class="pvp-bar"><div class="pvp-bar-fill" id="pvpSlowP2"></div></div>
+    </div>
+  </div>
 </div>
 
 <div class="overlay hidden" id="menuOverlay">
@@ -435,12 +480,56 @@
           <li>Chase a new high score</li>
         </ul>
       </div>
+      <div class="mode-card pvp" id="pvpBtn" style="width:100%; max-width:702px;">
+        <div class="mode-card-title" style="color:var(--magenta); text-shadow:0 0 14px rgba(255,91,216,.5);">PvP · Local 2-Player</div>
+        <div class="mode-card-desc">Two players, one keyboard. Survival — last one standing wins. Race — split the core and be first to destroy your half.</div>
+      </div>
     </div>
     <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:22px;">
       <button class="cta ghost" id="howToPlayBtn">HOW TO PLAY</button>
       <button class="cta ghost" id="controlsBtn">CONTROLS</button>
       <button class="cta ghost" id="testModeBtn">TEST MODE: OFF</button>
       <button class="cta ghost" id="muteBtn">MUSIC: ON</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay hidden" id="pvpOverlay">
+  <div class="panel wide">
+    <div class="title" style="font-size:38px;">PvP · Local 2-Player</div>
+    <div class="subtitle" style="margin-bottom:10px;">Two players share one keyboard. Pick a mode.</div>
+    <div class="pvp-controls">
+      <div class="pvp-ctrl-col p1">
+        <div class="who">PLAYER 1</div>
+        Move <b>W A S D</b><br>Jump <b>Space</b><br>Dash <b>Left Shift</b><br>Slow-Mo <b>E</b>
+      </div>
+      <div class="pvp-ctrl-col p2">
+        <div class="who">PLAYER 2</div>
+        Move <b>Arrow Keys</b><br>Jump <b>/</b><br>Dash <b>.</b><br>Slow-Mo <b>,</b>
+      </div>
+    </div>
+    <div class="pvp-opt-cards">
+      <div class="pvp-opt" id="pvpSurvivalBtn">
+        <div class="pvp-opt-title">Survival</div>
+        <div class="pvp-opt-desc">No core — just dodge. Both players face the same barrage; the last one still alive wins. One hit and you're out.</div>
+      </div>
+      <div class="pvp-opt" id="pvpRaceBtn">
+        <div class="pvp-opt-title">Race</div>
+        <div class="pvp-opt-desc">The core is split in two. Sever shots to destroy your own half — first to finish wins. Dying costs you a long respawn delay.</div>
+      </div>
+    </div>
+    <div style="margin-top:16px;"><button class="cta ghost" id="pvpBackBtn" style="min-width:160px;">BACK</button></div>
+  </div>
+</div>
+
+<div class="overlay hidden" id="pvpResultOverlay">
+  <div class="panel">
+    <div class="subtitle" id="pvpResultSub" style="margin-bottom:2px;">PvP · Survival</div>
+    <div class="pvp-winner" id="pvpWinnerText">PLAYER 1 WINS</div>
+    <div class="go-best" id="pvpResultStat" style="margin-bottom:8px;">—</div>
+    <div style="display:flex; gap:12px; justify-content:center; margin-top:4px; flex-wrap:wrap;">
+      <button class="cta" id="pvpRematchBtn" style="min-width:210px;">REMATCH</button>
+      <button class="cta ghost" id="pvpMenuBtn" style="min-width:210px;">MAIN MENU</button>
     </div>
   </div>
 </div>
@@ -578,10 +667,31 @@ function saveKeybinds(){ localStorage.setItem(KEYBINDS_KEY, JSON.stringify(keybi
 function rebindAction(action, physicalKeys){
   keybinds[action] = Array.isArray(physicalKeys) ? physicalKeys.slice() : [physicalKeys];
 }
+// the input helpers read whichever keybind set is "active" — normally the player's own
+// rebindable set, but during PvP it's swapped to each player's fixed set as they're updated
+let activeKeybinds = keybinds;
 function down(...ks){ return ks.some(k=>keys[k]); }
-function isActionDown(action){ return down(...keybinds[action]); }
-function isActionPressed(action){ return keybinds[action].some(k=>pressedEdge[k]); }
-function consumeActionPress(action){ for(const k of keybinds[action]) pressedEdge[k]=false; }
+function isActionDown(action){ return down(...activeKeybinds[action]); }
+function isActionPressed(action){ return (activeKeybinds[action]||[]).some(k=>pressedEdge[k]); }
+function consumeActionPress(action){ for(const k of (activeKeybinds[action]||[])) pressedEdge[k]=false; }
+
+// ---------- PvP: two players on one keyboard ----------
+// fixed control sets, one per player. Every action name the single-player kit checks must be
+// present (unused ones bound to nothing) so isActionPressed('ability1') etc. never trip on an
+// undefined bind. PvP players only get the baseline kit: move, jump, dash, slow-mo.
+const PVP_KB_P1 = {
+  moveUp:['w'], moveDown:['s'], moveLeft:['a'], moveRight:['d'],
+  jump:[' '], ability3:['shift'], ability2:['e'],
+  ability1:[], ability4:[], ability5:[]
+};
+const PVP_KB_P2 = {
+  moveUp:['arrowup'], moveDown:['arrowdown'], moveLeft:['arrowleft'], moveRight:['arrowright'],
+  jump:['/'], ability3:['.'], ability2:[','],
+  ability1:[], ability4:[], ability5:[]
+};
+// the physical keys PvP owns — used to swallow browser defaults (quick-find on '/', scroll on
+// arrows/space) while a PvP match is live
+const PVP_KEYS = new Set(['w','a','s','d',' ','shift','e','arrowup','arrowdown','arrowleft','arrowright','/','.',',']);
 
 // ---------- rebinding UI ----------
 // human-readable label for any physical key string used above
@@ -660,6 +770,7 @@ window.addEventListener('keydown', (e)=>{
     return;
   }
   if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
+  if(pvp && PVP_KEYS.has(k)) e.preventDefault(); // stop '/' quick-find etc. hijacking P2's keys
   // ignore OS key-repeat: a key held from before a state change must not re-trigger
   // an upgrade pick just because the same physical key is still being held down
   if(e.repeat) return;
@@ -672,7 +783,7 @@ window.addEventListener('keydown', (e)=>{
     if(k==='z') choosePendingUpgrade(0);
     else if(k==='x') choosePendingUpgrade(1);
     else if(k==='c') choosePendingUpgrade(2);
-  } else if(state==='gameover' && !inTutorialLevel){
+  } else if(state==='gameover' && !inTutorialLevel && !pvp){ // PvP result has its own buttons
     if(k==='l'){ if(gameMode==='endless') showMenu(); else showLevelSelect(); }
     else if(k==='r' && (!levelWon || canRetryWin)){ if(gameMode==='endless') startEndless(); else startLevel(currentLevel); }
     else if(k===' ' || k==='enter'){
@@ -813,18 +924,39 @@ function spawnR(){ return CORE_NO_GO_R(); } // projectiles emerge from the edge 
 function pr(px){ return R*px/400; } // projectile radius scaled off the arena fit radius (400 is the reference size these numbers were tuned at)
 
 function playerBaseR(){ return R*0.03; }
-const player = {
-  x:0, y:0, vx:0, vy:0, r:playerBaseR(), facing:0,
-  jumpT:0, jumpCd:0, jumpDurActive:0.42, jumpDirX:0, jumpDirY:0,
-  jumpCharges:1, jumpZ:0, jumpVZ:0,
-  dashT:0, dashCd:0, dashVX:0, dashVY:0,
-  wallT:0, wallCd:0, wallUnlocked:false, wallAngle:0, wallRadius:0,
-  novaCd:0, novaUnlocked:false,
-  decoyCd:0, decoyT:0, decoyUnlocked:false, decoyX:0, decoyY:0,
-  slowEnergy:100, slowActive:false, slowPullRepelT:0,
-  invincT:0,
-  up:{ legs:0, reflex:0, slim:0, reflectSever:0, dashTrail:0, slowPull:0, extraJump:0, shieldCharge:0, scoreMult:0, slowMaxBoost:0, slowEfficiency:0 }
-};
+function makePlayerObject(){
+  return {
+    x:0, y:0, vx:0, vy:0, r:playerBaseR(), facing:0,
+    jumpT:0, jumpCd:0, jumpDurActive:0.42, jumpDirX:0, jumpDirY:0,
+    jumpCharges:1, jumpZ:0, jumpVZ:0,
+    dashT:0, dashCd:0, dashVX:0, dashVY:0,
+    wallT:0, wallCd:0, wallUnlocked:false, wallAngle:0, wallRadius:0,
+    novaCd:0, novaUnlocked:false,
+    decoyCd:0, decoyT:0, decoyUnlocked:false, decoyX:0, decoyY:0,
+    slowEnergy:100, slowActive:false, slowPullRepelT:0,
+    invincT:0,
+    // PvP-only fields (harmless in single-player): identity/team + alive/respawn/score/half state
+    color:'#5be3ff', kb:null, alive:true, respawnT:0, survivalTime:0, spawnAngle:Math.PI/2, halfHP:0,
+    up:{ legs:0, reflex:0, slim:0, reflectSever:0, dashTrail:0, slowPull:0, extraJump:0, shieldCharge:0, scoreMult:0, slowMaxBoost:0, slowEfficiency:0 }
+  };
+}
+// `player` is the "current" player the per-player systems act on. In single-player it's the
+// only one; in PvP it's swapped to each player in turn (see the frame loop).
+let player = makePlayerObject();
+
+// ---- multiplayer (PvP + co-op) match state ----
+let pvp = false;              // a local 2-player versus match is active
+let pvpMode = null;           // 'survival' | 'race'
+let coop = false;             // a local 2-player co-op match is active
+let coopMode = null;          // 'survival' | 'takedown'
+let players = null;           // [p1, p2] during any 2-player match, else null
+let pvpOver = false;          // match decided — stop running win checks
+// true whenever a 2-player match (versus or co-op) is running
+function multi(){ return pvp || coop; }
+const PVP_RESPAWN_DELAY = 4;  // seconds a race death costs you before you're back in
+const PVP_HALF_HP = 100;      // each player's half of the core in race mode
+const PVP_RACE_LEVEL = 6;     // fixed difficulty for race (no ramp — a pure sever race)
+const PVP_P1_COLOR = '#5be3ff', PVP_P2_COLOR = '#ff5bd8';
 
 const ABILITY = {
   JUMP_DUR:0.7, JUMP_CD:1.15,
@@ -881,25 +1013,34 @@ function slowDrainRate(){ return ABILITY.SLOW_DRAIN * (1 - Math.min((player.up.s
 function moveSpeedMult(){ return 1 + player.up.legs*legsSpeedBonus(); }
 function updatePlayerRadius(){ player.r = playerBaseR() * (1 - Math.min(player.up.slim*slimHitboxCut(), 0.85)); }
 
-function resetPlayer(){
-  player.up = { legs:0, reflex:0, slim:0, reflectSever:0, dashTrail:0, slowPull:0, extraJump:0, shieldCharge:0, scoreMult:0, slowMaxBoost:0, slowEfficiency:0 };
-  abilityUnlockOrder = [];
+// resets a given player object; `angle` places it on the arena between the core and the wall
+// (single-player always spawns at the bottom; PvP spawns the two on opposite lower corners).
+// `keepBuild` leaves the upgrade set alone (used by a race respawn, which shouldn't wipe it —
+// though PvP players have no upgrades anyway; jumpChargeMax()/radius still depend on it).
+function resetPlayerObj(p, angle, keepBuild){
+  const prev = player; player = p; // jumpChargeMax()/updatePlayerRadius() read the global `player`
+  if(!keepBuild) p.up = { legs:0, reflex:0, slim:0, reflectSever:0, dashTrail:0, slowPull:0, extraJump:0, shieldCharge:0, scoreMult:0, slowMaxBoost:0, slowEfficiency:0 };
   updatePlayerRadius();
-  const a = Math.PI/2; // always spawn at the bottom of the arena, between the core and the boundary
+  const a = angle==null ? Math.PI/2 : angle;
   const rr = R*0.55;
-  player.x = CX + Math.cos(a)*rr;
-  player.y = CY + Math.sin(a)*rr;
-  player.vx = 0; player.vy = 0;
-  player.jumpT = 0; player.jumpCd = 0; player.jumpDurActive = ABILITY.JUMP_DUR; player.jumpDirX = 0; player.jumpDirY = 0;
-  player.jumpCharges = jumpChargeMax();
-  player.jumpZ = 0; player.jumpVZ = 0;
-  player.dashT = 0; player.dashCd = 0;
-  player.wallT = 0; player.wallCd = 0; player.wallUnlocked = false; player.wallAngle = 0; player.wallRadius = 0;
-  player.novaCd = 0; player.novaUnlocked = false;
-  player.decoyCd = 0; player.decoyT = 0; player.decoyUnlocked = false;
-  player.slowEnergy = 100; player.slowActive = false; player.slowPullRepelT = 0;
-  player.invincT = 0;
-  player.facing = Math.atan2(CY-player.y, CX-player.x);
+  p.x = CX + Math.cos(a)*rr;
+  p.y = CY + Math.sin(a)*rr;
+  p.vx = 0; p.vy = 0;
+  p.jumpT = 0; p.jumpCd = 0; p.jumpDurActive = ABILITY.JUMP_DUR; p.jumpDirX = 0; p.jumpDirY = 0;
+  p.jumpCharges = jumpChargeMax();
+  p.jumpZ = 0; p.jumpVZ = 0;
+  p.dashT = 0; p.dashCd = 0;
+  p.wallT = 0; p.wallCd = 0; p.wallUnlocked = false; p.wallAngle = 0; p.wallRadius = 0;
+  p.novaCd = 0; p.novaUnlocked = false;
+  p.decoyCd = 0; p.decoyT = 0; p.decoyUnlocked = false;
+  p.slowEnergy = 100; p.slowActive = false; p.slowPullRepelT = 0;
+  p.invincT = 0;
+  p.facing = Math.atan2(CY-p.y, CX-p.x);
+  player = prev;
+}
+function resetPlayer(){
+  abilityUnlockOrder = [];
+  resetPlayerObj(player, Math.PI/2, false);
 }
 
 // per-run reset shared by both modes — everything except which mode we're in and what level we're on
@@ -964,9 +1105,11 @@ function showMenu(){
   state = 'menu';
   setPaused(false);
   inTutorialLevel = false; // safety net — any path back to the menu should never leave this stuck on
+  if(pvp) exitPvp();
   document.getElementById('goOverlay').classList.add('hidden');
   document.getElementById('levelOverlay').classList.add('hidden');
   document.getElementById('levelSelectOverlay').classList.add('hidden');
+  document.getElementById('pvpOverlay').classList.add('hidden');
   document.getElementById('menuOverlay').classList.remove('hidden');
 }
 
@@ -979,6 +1122,109 @@ function showLevelSelect(){
   document.getElementById('levelSelectOverlay').classList.remove('hidden');
   renderLevelGrid();
 }
+
+// ================= PvP =================
+function showPvpMenu(){
+  state = 'menu';
+  setPaused(false);
+  hideAllOverlays();
+  document.getElementById('menuOverlay').classList.add('hidden');
+  document.getElementById('pvpOverlay').classList.remove('hidden');
+}
+
+// starts a local 2-player match. Survival reuses the coreless, difficulty-ramping endless
+// spawner; Race reuses the levels spawner (so severing exists) at a fixed difficulty, with
+// the core split into two independent halves.
+function startPvp(mode){
+  pvp = true;
+  pvpMode = mode;
+  pvpOver = false;
+  gameMode = (mode==='race') ? 'levels' : 'endless';
+  currentLevel = PVP_RACE_LEVEL; // only actually read in race (levels) mode
+  state = 'playing';
+  setPaused(false);
+  testMode = false;
+  tutorialActive = false; inTutorialLevel = false;
+
+  resetRunState();
+  nextUpgradeAt = Infinity; // no upgrade-pick pauses in PvP
+
+  const p1 = makePlayerObject();
+  p1.color = PVP_P1_COLOR; p1.kb = PVP_KB_P1; p1.spawnAngle = Math.PI*0.78; // lower-left
+  const p2 = makePlayerObject();
+  p2.color = PVP_P2_COLOR; p2.kb = PVP_KB_P2; p2.spawnAngle = Math.PI*0.22; // lower-right
+  for(const p of [p1,p2]){
+    resetPlayerObj(p, p.spawnAngle, true);
+    p.alive = true; p.respawnT = 0; p.survivalTime = 0; p.invincT = 1.0;
+    p.halfHP = PVP_HALF_HP;
+  }
+  players = [p1, p2];
+  player = p1; activeKeybinds = keybinds;
+
+  document.documentElement.style.setProperty('--p1', PVP_P1_COLOR);
+  document.documentElement.style.setProperty('--p2', PVP_P2_COLOR);
+  document.getElementById('pvpHud').classList.remove('hidden');
+  hideAllOverlays();
+  document.getElementById('pvpOverlay').classList.add('hidden');
+}
+
+function updatePvpHud(){
+  for(let i=0;i<2;i++){
+    const p = players[i], n = i+1;
+    document.getElementById('pvpName'+'P'+n).textContent = 'PLAYER '+n;
+    const statEl = document.getElementById('pvpStat'+'P'+n);
+    if(pvpMode==='survival'){
+      const t = p.survivalTime.toFixed(1);
+      statEl.textContent = p.alive ? (t+'s') : ('OUT · '+t+'s');
+      statEl.classList.toggle('out', !p.alive);
+    } else { // race
+      const pct = Math.round(Math.max(0,p.halfHP)/PVP_HALF_HP*100);
+      if(!p.alive && p.respawnT>0){ statEl.textContent = 'DOWN · '+p.respawnT.toFixed(1)+'s'; statEl.classList.add('out'); }
+      else { statEl.textContent = pct+'% left'; statEl.classList.remove('out'); }
+    }
+    // slow-mo energy bar
+    const prev = player; player = p;
+    const frac = Math.max(0, Math.min(1, p.slowEnergy/slowEnergyMax()));
+    player = prev;
+    document.getElementById('pvpSlow'+'P'+n).style.width = (frac*100)+'%';
+  }
+}
+
+function showPvpResult(winner){
+  document.getElementById('pvpHud').classList.add('hidden');
+  const sub = document.getElementById('pvpResultSub');
+  const winTxt = document.getElementById('pvpWinnerText');
+  const stat = document.getElementById('pvpResultStat');
+  sub.textContent = 'PvP · ' + (pvpMode==='race' ? 'Race' : 'Survival');
+  if(!winner){
+    winTxt.textContent = "IT'S A DRAW";
+    winTxt.style.color = 'var(--text)';
+    stat.textContent = pvpMode==='survival' ? ('Both lasted '+players[0].survivalTime.toFixed(1)+'s') : '';
+  } else {
+    const n = players.indexOf(winner)+1;
+    winTxt.textContent = 'PLAYER '+n+' WINS';
+    winTxt.style.color = winner.color;
+    if(pvpMode==='survival'){
+      const loser = players.find(p=>p!==winner);
+      stat.innerHTML = 'Survived <b>'+winner.survivalTime.toFixed(1)+'s</b> to <b>'+loser.survivalTime.toFixed(1)+'s</b>';
+    } else {
+      const loser = players.find(p=>p!==winner);
+      stat.innerHTML = 'Finished with the opponent at <b>'+Math.round(Math.max(0,loser.halfHP)/PVP_HALF_HP*100)+'%</b> left';
+    }
+  }
+  document.getElementById('pvpResultOverlay').classList.remove('hidden');
+}
+
+function exitPvp(){
+  pvp = false; pvpMode = null; players = null; pvpOver = false;
+  activeKeybinds = keybinds;
+  player = makePlayerObjectSafe();
+  document.getElementById('pvpHud').classList.add('hidden');
+  document.getElementById('pvpResultOverlay').classList.add('hidden');
+}
+// after a match, restore a clean single-player `player` so the rest of the game (HUD reads,
+// menu) has a valid object to point at
+function makePlayerObjectSafe(){ const p = makePlayerObject(); return p; }
 
 // ================= FIRST-RUN TUTORIAL =================
 // An interactive, hands-on walkthrough shown the very first time the game loads (in place of
@@ -1288,6 +1534,19 @@ function failLevel(){
 document.getElementById('continueBtn').addEventListener('click', showLevelSelect);
 document.getElementById('endlessBtn').addEventListener('click', startEndless);
 document.getElementById('backToMenuBtn').addEventListener('click', showMenu);
+document.getElementById('pvpBtn').addEventListener('click', showPvpMenu);
+document.getElementById('pvpBackBtn').addEventListener('click', ()=>{
+  document.getElementById('pvpOverlay').classList.add('hidden');
+  showMenu();
+});
+document.getElementById('pvpSurvivalBtn').addEventListener('click', ()=> startPvp('survival'));
+document.getElementById('pvpRaceBtn').addEventListener('click', ()=> startPvp('race'));
+document.getElementById('pvpRematchBtn').addEventListener('click', ()=>{
+  const mode = pvpMode;
+  exitPvp();
+  startPvp(mode);
+});
+document.getElementById('pvpMenuBtn').addEventListener('click', ()=>{ exitPvp(); showMenu(); });
 document.getElementById('retryBtn').addEventListener('click', ()=>{ if(gameMode==='endless') startEndless(); else startLevel(currentLevel); });
 document.getElementById('nextLevelBtn').addEventListener('click', ()=> startLevel(currentLevel+1));
 document.getElementById('levelSelectBtn').addEventListener('click', ()=>{ if(gameMode==='endless') showMenu(); else showLevelSelect(); });
@@ -1375,7 +1634,8 @@ const MUSIC_VOL     = 1.15;                       // master, pre-limiter
 // the game drives the music through this host: which track, how far in, how hot, and whether
 // a run is actually happening (silent at the menu / result screens)
 const MUSIC_HOST = {
-  active(){ return state==='playing' || state==='exploding' || state==='levelup'; },
+  // multiplayer (PvP + co-op) has no soundtrack yet — those modes stay silent for now
+  active(){ return !pvp && !coop && (state==='playing' || state==='exploding' || state==='levelup'); },
   time(){ return elapsed; },
   trackId(){ return gameMode==='endless' ? 'endless' : currentLevel; },
   intensity(){ return corePhase>=2 ? 1 : 0; }
@@ -2299,10 +2559,27 @@ function mkProj(o){
 }
 
 function playerPredicted(lead){
+  if(pvp){
+    // aim each shot at a randomly chosen living player, so the core threatens both fairly
+    const alive = players.filter(p=>p.alive);
+    const t = alive.length ? alive[(Math.random()*alive.length)|0] : players[0];
+    return { x: t.x + t.vx*lead, y: t.y + t.vy*lead };
+  }
   // Decoy Beacon upgrade: every aimed attack (straight/fan/sniper/bomb/laser/wave all
   // route their aim through here) targets the beacon instead, not just homing shots
   if(player.decoyT>0) return { x: player.decoyX, y: player.decoyY };
   return { x: player.x + player.vx*lead, y: player.y + player.vy*lead };
+}
+
+// where a homing shot should steer — the decoy beacon (single-player) or the nearest living
+// player (PvP)
+function homingTargetFor(p){
+  if(pvp){
+    let best=null, bd=Infinity;
+    for(const q of players){ if(!q.alive) continue; const d=dist(q.x,q.y,p.x,p.y); if(d<bd){ bd=d; best=q; } }
+    return best ? { x:best.x, y:best.y } : { x:CX, y:CY };
+  }
+  return player.decoyT>0 ? { x:player.decoyX, y:player.decoyY } : { x:player.x, y:player.y };
 }
 
 function spawnStraight(){
@@ -2806,8 +3083,14 @@ function updatePlayer(dt){
   }
 }
 
+// living players the shared systems (aim, homing, field-slow) should consider
+function activePlayers(){ return pvp ? players.filter(p=>p.alive) : [player]; }
+
 function projSlowFactor(){
-  return player.slowActive ? ABILITY.SLOW_FACTOR : 1;
+  // slow-mo slows the whole shared field; in PvP that means either player triggering it
+  // slows time for both — a real double-edged tool
+  const set = activePlayers();
+  return set.some(p=>p.slowActive) ? ABILITY.SLOW_FACTOR : 1;
 }
 
 function updateProjectiles(dt){
@@ -2819,10 +3102,10 @@ function updateProjectiles(dt){
     const px0 = p.x, py0 = p.y;
 
     if(p.type==='homing'){
-      // Decoy Beacon upgrade: while active, homing shots chase the beacon instead of you
-      const targX = player.decoyT>0 ? player.decoyX : player.x;
-      const targY = player.decoyT>0 ? player.decoyY : player.y;
-      const desired = Math.atan2(targY-p.y, targX-p.x);
+      // Decoy Beacon upgrade: while active, homing shots chase the beacon instead of you.
+      // In PvP they chase whichever living player is nearest.
+      const targ = homingTargetFor(p);
+      const desired = Math.atan2(targ.y-p.y, targ.x-p.x);
       const cur = Math.atan2(p.vy,p.vx);
       const diff = angNorm(desired-cur);
       const maxTurn = p.turnRate*pdt;
@@ -2989,6 +3272,7 @@ function checkCollisions(){
   // the tutorial is forgiving — a mistimed dodge shouldn't end the lesson, so shots pass
   // harmlessly through the player. Severing still works (that's checkSevers, separate).
   if(tutorialActive) return;
+  if(pvp){ checkCollisionsPvp(player); return; } // per-player hit -> that player dies, not the match
   const invuln = player.dashT>0 || player.invincT>0;
   // test mode is a pure sandbox for testing severing/deflection/core damage — shots just
   // pass through the player with no effect at all, not even a no-sell flash. still worth
@@ -3062,6 +3346,75 @@ function consumeShieldOrFail(){
   failLevel();
 }
 
+// ---- PvP per-player collision / death / respawn / win ----
+// same hit test as single-player, but a hit kills only the current player `pl`
+function checkCollisionsPvp(pl){
+  if(!pl.alive || pl.invincT>0 || pl.dashT>0) return;
+  for(const p of projectiles){
+    if(p.spawnGrace>0 || p.dead) continue;
+    if(dist(pl.x,pl.y,p.x,p.y) < pl.r+p.r){
+      if(p.tag==='ground' && pl.jumpT>0) continue; // jumped over a ground shot
+      killPvpPlayer(pl);
+      return;
+    }
+  }
+  for(const t of telegraphs){
+    if(t.type!=='laserActive') continue;
+    const pd = dist(CX,CY,pl.x,pl.y);
+    if(pd > R*0.98) continue;
+    const pa = Math.atan2(pl.y-CY, pl.x-CX);
+    if(Math.abs(angNorm(pa-t.angle)) < t.halfWidth){ killPvpPlayer(pl); return; }
+  }
+}
+
+function killPvpPlayer(pl){
+  pl.alive = false;
+  spawnBurstParticles(pl.x, pl.y, pl.color, 26);
+  shakeT = Math.max(shakeT, 0.25); shakeMag = Math.max(shakeMag, 12); shakeMax = Math.max(shakeMax, shakeT);
+  flashHit(0.35, pl.color);
+  playDeathSfx();
+  if(pvpMode==='race'){
+    // dying costs you a long respawn delay — the whole point of the race penalty
+    pl.respawnT = PVP_RESPAWN_DELAY;
+  }
+  // survival: no respawn — you're simply out; survivalTime is frozen at this point
+}
+
+function respawnPvpPlayer(pl){
+  resetPlayerObj(pl, pl.spawnAngle, true);
+  pl.alive = true;
+  pl.respawnT = 0;
+  pl.invincT = 1.4; // brief grace so you're not instantly re-killed on the same volley
+}
+
+// decides a PvP match. Survival: the moment one player dies the other has outlasted them and
+// wins (equal-frame double-KO compares survival time, tie = draw). Race: first to zero their
+// half of the core wins.
+function checkPvpWin(){
+  if(pvpOver) return;
+  if(pvpMode==='survival'){
+    if(players.some(p=>!p.alive)) endPvpMatch();
+  } else { // race
+    const winner = players.find(p=>p.halfHP<=0);
+    if(winner) endPvpMatch(winner);
+  }
+}
+
+function endPvpMatch(raceWinner){
+  pvpOver = true;
+  state = 'gameover';
+  let winner;
+  if(pvpMode==='race'){
+    winner = raceWinner;
+  } else {
+    const alive = players.filter(p=>p.alive);
+    if(alive.length===1) winner = alive[0]; // the survivor
+    else winner = players[0].survivalTime===players[1].survivalTime ? null
+               : (players[0].survivalTime>players[1].survivalTime ? players[0] : players[1]);
+  }
+  showPvpResult(winner);
+}
+
 // cutting through a shot's tail destroys it and chips the core — levels-mode only:
 // endless has no core to chip, so severing doesn't exist there
 function checkSevers(){
@@ -3090,6 +3443,11 @@ function registerSever(p){
   severCount++;
   p.dead = true; // cutting through a shot's tail destroys it — this is baseline now, not an upgrade perk
   spawnBurstParticles(p.x,p.y,'#bdfff0',6);
+  // in a PvP race each sever chips the severing player's own half of the core, not a shared one
+  if(pvp){
+    if(pvpMode==='race') player.halfHP = Math.max(0, player.halfHP - ABILITY.SEVER_CORE_DMG);
+    return;
+  }
   damageCore(ABILITY.SEVER_CORE_DMG);
   if(player.up.reflectSever){
     damageCore(ABILITY.REFLECT_CORE_DMG_BONUS);
@@ -3276,6 +3634,29 @@ function drawCoreHP(){
   ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.stroke();
   ctx.strokeStyle = frac>0.3 ? 'rgba(120,255,180,.85)' : 'rgba(255,74,94,.9)';
   ctx.beginPath(); ctx.arc(0,0,r,-Math.PI/2,-Math.PI/2+Math.PI*2*frac); ctx.stroke();
+  ctx.restore();
+}
+
+// race mode: the core is split into two halves. The left semicircle drains as P1 severs,
+// the right as P2 severs — each in that player's colour, so the race is legible at a glance.
+function drawPvpRaceHP(){
+  if(!(pvp && pvpMode==='race')) return;
+  ctx.save();
+  ctx.translate(CX,CY);
+  const r = CORE_NO_GO_R()+8;
+  ctx.lineWidth = 5;
+  // faint full backing ring
+  ctx.strokeStyle = 'rgba(255,255,255,.12)';
+  ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.stroke();
+  // P1 owns the left half (top -> bottom going counter-clockwise through the left side),
+  // draining from full toward the top as their half is destroyed
+  const f1 = Math.max(0, players[0].halfHP/PVP_HALF_HP);
+  ctx.strokeStyle = players[0].color;
+  ctx.beginPath(); ctx.arc(0,0,r, Math.PI/2, Math.PI/2 + Math.PI*f1); ctx.stroke();
+  // P2 owns the right half
+  const f2 = Math.max(0, players[1].halfHP/PVP_HALF_HP);
+  ctx.strokeStyle = players[1].color;
+  ctx.beginPath(); ctx.arc(0,0,r, Math.PI/2, Math.PI/2 - Math.PI*f2, true); ctx.stroke();
   ctx.restore();
 }
 
@@ -3482,7 +3863,7 @@ function drawPlayerShip(x, y, alpha){
   // height rather than resetting the arc — and therefore the player's visible position
   const hop = Math.min(1.5, player.jumpZ);
   const scale = 1 + hop*0.6;
-  const bodyColor = player.dashT>0 ? '#ffab4a' : '#5be3ff';
+  const bodyColor = player.dashT>0 ? '#ffab4a' : (player.color || '#5be3ff');
 
   ctx.save();
   ctx.translate(x,y);
@@ -3562,11 +3943,18 @@ function render(){
   drawTelegraphs();
   drawCore();
   drawCoreHP();
+  drawPvpRaceHP();
   drawWall();
   drawDecoy();
   drawParticles();
   drawProjectiles();
-  drawPlayer();
+  if(pvp){
+    const prev = player;
+    for(const p of players){ if(p.alive){ player = p; drawPlayer(); } }
+    player = prev;
+  } else {
+    drawPlayer();
+  }
   ctx.restore();
   drawTutorialArrow(); // in plain screen space, on top of the shaken scene
 }
@@ -3675,6 +4063,15 @@ function hudClass(key, el, cls, on){
 }
 
 function updateHud(){
+  if(pvp){
+    // PvP has its own two-player HUD; hide all the single-player readouts
+    hudStyle('hudBottomDisp', hudBottom, 'display', 'none');
+    hudStyle('upgradePanelDisp', upgradePanel, 'display', 'none');
+    hudStyle('scoreBlockDisp', scoreLabel.parentElement, 'display', 'none');
+    updatePvpHud();
+    return;
+  }
+  hudStyle('scoreBlockDisp', scoreLabel.parentElement, 'display', '');
   if(gameMode==='endless'){
     hudText('scoreLabel', scoreLabel, 'Score');
     hudText('curLevel', curLevelVal, String(Math.floor(score)));
@@ -3815,7 +4212,30 @@ function frame(now){
       if(testMode) upgradeIndex++;
       else enterLevelUp();
     }
-    if(state==='playing'){
+    if(state==='playing' && pvp){
+      // move/act each living player (swapping the current-player pointer + control set), then
+      // update the shared projectile field once, then resolve severs/hits per player
+      for(const p of players){
+        if(p.alive){ player = p; activeKeybinds = p.kb; updatePlayer(dt); }
+        else if(p.respawnT>0){ p.respawnT -= dt; if(p.respawnT<=0) respawnPvpPlayer(p); }
+      }
+      player = players[0]; activeKeybinds = keybinds;
+      updateSpawner(dt);
+      updateProjectiles(dt);
+      updateTelegraphs(dt);
+      updateParticles(dt*projSlowFactor());
+      updatePulseRings(dt*projSlowFactor());
+      updateDashTrail(dt);
+      for(const p of players){
+        if(!p.alive) continue;
+        player = p; activeKeybinds = p.kb;
+        if(pvpMode==='race') checkSevers();
+        checkCollisions();
+        if(pvpMode==='survival') p.survivalTime += dt;
+      }
+      player = players[0]; activeKeybinds = keybinds;
+      checkPvpWin();
+    } else if(state==='playing'){
       updatePlayer(dt);
       updateSpawner(dt);
       updateProjectiles(dt);
