@@ -177,6 +177,56 @@
   }
   .tutorial-skip:hover{ opacity:1; }
 
+  /* ---- interactive tutorial coach box (floats over live gameplay, doesn't dim the whole
+     screen like a full overlay) ---- */
+  .coach{
+    position:fixed; left:50%; bottom:34px; transform:translateX(-50%);
+    width:min(560px, calc(100vw - 40px)); z-index:40;
+    padding:18px 22px 16px; border-radius:16px; text-align:center;
+    background:linear-gradient(180deg, rgba(16,22,38,.94), rgba(8,11,20,.96));
+    border:1.5px solid rgba(91,227,255,.4);
+    box-shadow:0 12px 40px -8px rgba(0,0,0,.7), 0 0 24px -6px rgba(91,227,255,.3);
+    animation:coach-in .28s ease;
+  }
+  .coach.hidden{ display:none; }
+  .coach.action{ border-color:rgba(255,171,74,.5); box-shadow:0 12px 40px -8px rgba(0,0,0,.7), 0 0 24px -6px rgba(255,171,74,.35); }
+  @keyframes coach-in{ from{ opacity:0; transform:translate(-50%, 14px); } to{ opacity:1; transform:translate(-50%, 0); } }
+  .coach-badge{
+    display:inline-block; margin-bottom:8px; padding:3px 12px; border-radius:20px;
+    font-size:10px; font-weight:800; letter-spacing:.14em;
+    background:rgba(91,227,255,.12); border:1px solid rgba(91,227,255,.4); color:var(--cyan);
+  }
+  .coach.action .coach-badge{ background:rgba(255,171,74,.12); border-color:rgba(255,171,74,.45); color:var(--orange); }
+  .coach-title{ font-size:20px; font-weight:800; letter-spacing:.02em; margin-bottom:6px; color:var(--text); }
+  .coach-text{ font-size:13.5px; color:var(--dim); line-height:1.5; }
+  .coach-text b{ color:var(--text); }
+  .coach-text .k{
+    display:inline-block; padding:1px 7px; border-radius:6px; margin:0 1px;
+    background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18);
+    font-weight:700; font-size:12px; color:var(--text);
+  }
+  .coach-btn{ margin-top:14px; }
+  .coach-progress{ font-size:10.5px; color:var(--dim); letter-spacing:.1em; margin-top:12px; opacity:.65; }
+  .coach-skip{
+    display:block; margin-top:8px; font-size:10.5px; color:var(--dim);
+    text-decoration:underline; cursor:pointer; opacity:.6; transition:opacity .12s ease;
+  }
+  .coach-skip:hover{ opacity:1; }
+  .coach-wait{
+    margin-top:12px; font-size:11px; font-weight:700; letter-spacing:.12em;
+    color:var(--orange); text-transform:uppercase; animation:coach-wait-pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes coach-wait-pulse{ 0%,100%{ opacity:.5; } 50%{ opacity:1; } }
+  /* a soft pulsing ring dropped on a DOM target (ability tile, upgrade panel) the coach is
+     pointing at, so the arrow has something to land on */
+  .coach-highlight{ position:relative; }
+  .coach-highlight::after{
+    content:''; position:absolute; inset:-6px; border-radius:14px; pointer-events:none;
+    border:2px solid var(--orange); box-shadow:0 0 18px -2px var(--orange);
+    animation:coach-hl 1.1s ease-in-out infinite;
+  }
+  @keyframes coach-hl{ 0%,100%{ opacity:.4; } 50%{ opacity:1; } }
+
   .bind-list{ display:flex; flex-direction:column; gap:8px; margin:18px 0; text-align:left; }
   .bind-row{
     display:flex; align-items:center; justify-content:space-between; gap:14px;
@@ -410,19 +460,14 @@
   </div>
 </div>
 
-<div class="overlay hidden" id="tutorialOverlay">
-  <div class="panel wide">
-    <div class="tutorial-dots" id="tutorialDots"></div>
-    <div class="tutorial-badge" id="tutorialBadge">LEVELS MODE</div>
-    <div class="title" id="tutorialTitle" style="font-size:34px;">Welcome</div>
-    <div class="tutorial-body" id="tutorialBody"></div>
-    <div id="tutorialSlideNav" style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:18px;">
-      <button class="cta ghost same-row" id="tutorialBackBtn" style="min-width:120px;">BACK</button>
-      <button class="cta" id="tutorialNextBtn" style="min-width:120px;">NEXT</button>
-    </div>
-    <div class="tutorial-skip" id="tutorialSkipBtn">Skip tutorial</div>
-    <button class="cta" id="tutorialContinueBtn" style="margin-top:18px; display:none;">CONTINUE</button>
-  </div>
+<div class="coach hidden" id="coachBox">
+  <div class="coach-badge" id="coachBadge">TUTORIAL</div>
+  <div class="coach-title" id="coachTitle"></div>
+  <div class="coach-text" id="coachText"></div>
+  <button class="cta coach-btn" id="coachBtn">GOT IT</button>
+  <div class="coach-wait" id="coachWait" style="display:none;">Try it to continue</div>
+  <div class="coach-progress" id="coachProgress"></div>
+  <div class="coach-skip" id="coachSkip">Skip tutorial</div>
 </div>
 
 <div class="overlay hidden" id="controlsOverlay">
@@ -620,7 +665,9 @@ window.addEventListener('keydown', (e)=>{
   if(e.repeat) return;
   if(!keys[k]) pressedEdge[k] = true;
   keys[k] = true;
-  if(k==='escape' && state==='playing'){ setPaused(!paused); return; }
+  // during a coach message beat, Enter advances the walkthrough (Space stays a game key)
+  if(tutorialActive && k==='enter' && !TUT_STEPS[tutorialStep].wait){ advanceTutorial(); return; }
+  if(k==='escape' && state==='playing' && !tutorialActive){ setPaused(!paused); return; }
   if(state==='levelup'){
     if(k==='z') choosePendingUpgrade(0);
     else if(k==='x') choosePendingUpgrade(1);
@@ -934,142 +981,181 @@ function showLevelSelect(){
 }
 
 // ================= FIRST-RUN TUTORIAL =================
-// a guided walkthrough shown in place of the old static intro page the very first time the
-// game loads — Levels mode slides, then a hands-on practice attempt at Level 1 (rigged so it
-// can't actually be won — it's just there to get a feel for dodging and severing), then
-// Endless mode slides, ending by dropping the player straight into an Endless run. The
-// original intro content still exists, just moved behind the "HOW TO PLAY" button.
+// An interactive, hands-on walkthrough shown the very first time the game loads (in place of
+// the old wall of intro slides). It runs inside a real Level 1: the game plays live, but the
+// coach freezes the sim at scripted "message" beats to point an arrow at something and
+// explain it, and on "action" beats it un-freezes and waits for the player to actually do the
+// thing (move, sever, jump, dash, slow-mo, pick an upgrade) before advancing. The same intro
+// content still exists as plain text behind the "HOW TO PLAY" button.
 const TUTORIAL_SEEN_KEY = 'pulseArenaTutorialSeen';
-const TUTORIAL_LEVEL_TIME_LIMIT = 25; // seconds — the practice attempt is cut short even if you never die
-let inTutorialLevel = false;
-const TUTORIAL_SLIDES = [
-  { mode:'levels', title:'Welcome to Pulse Arena', body:
-    '<p>A pulsing <b>core</b> sits at the center of the arena, constantly firing waves of projectiles outward. Your ship weaves through them using a small kit of dodges and abilities — and, in Levels mode, uses that same kit to fight back.</p>'+
-    '<p>This walkthrough covers <b>Levels mode</b> first, then <b>Endless mode</b>. Let\'s start with the basics.</p>' },
-  { mode:'levels', title:'Movement & Dodging', body:
-    '<div class="instructions">'+
-      '<div class="instr"><span class="k">WASD</span><div class="d">Move around the arena (arrow keys also work)</div></div>'+
-      '<div class="instr"><span class="k">SPACE</span><div class="d">Jump — hop over <b>ground</b> shots. Locks your direction until you land: a committed dodge, not free movement.</div></div>'+
-      '<div class="instr"><span class="k">SHIFT</span><div class="d">Dash — a quick burst of speed with full invulnerability. Can\'t be used mid-jump.</div></div>'+
-    '</div>' },
-  { mode:'levels', title:'Slow-Mo & Severing', body:
-    '<p><b>E — Slow-Mo:</b> press to slow every projectile in the arena. It runs on its own until the energy drains out, or press <b>E</b> again to cancel early. Energy regenerates over time.</p>'+
-    '<p><b>Severing:</b> every shot trails a tail behind it. Cutting through that tail destroys the shot and chips the core\'s health — it\'s your main way to damage the core.</p>' },
-  { mode:'levels', title:'Destroying the Core', body:
-    '<p>There\'s no timer in Levels mode. A level ends the instant the core\'s health hits zero — so the whole goal is to sever as many shots as you safely can.</p>'+
-    '<p>Along the way you\'ll get recurring <b>upgrade picks</b>: some are stat boosts, others unlock whole new abilities on <b>Q</b>, <b>F</b>, and <b>R</b>. Your build resets at the start of every level, so each run is a fresh set of choices.</p>' },
-  { mode:'levels', title:'Level Select & Stars', body:
-    '<p>There are <b>20 levels</b>, each harder than the last. Clearing one unlocks the next.</p>'+
-    '<p>Every level tracks your best clear time and awards <b>1 to 3 stars</b> for it — the faster you destroy the core, the more you earn. Just beating a level is worth a star; speed-running it is worth all three.</p>' },
-  { mode:'endless', title:'Endless Mode', body:
-    '<p>Endless drops the core entirely — there\'s nothing to destroy, and nothing to sever. Instead, you just <b>survive as long as you possibly can</b>.</p>'+
-    '<p>The arena keeps getting harder the longer you last, using the same movement, jump, dash, and slow-mo you just learned. Score climbs continuously as you survive, scaled by how far in you are.</p>' },
-  { mode:'endless', title:'Endless-Only Upgrades', body:
-    '<p>With no core to damage, Endless swaps in upgrades built for pure survival instead:</p>'+
-    '<div class="instructions">'+
-      '<div class="instr"><span class="k">🛡</span><div class="d"><b>Second Chance</b> — absorbs one hit that would end your run, at the cost of a chunk of your score.</div></div>'+
-      '<div class="instr"><span class="k">⚡</span><div class="d"><b>Adrenaline Rush</b> — boosts your score gain.</div></div>'+
-      '<div class="instr"><span class="k">⏳</span><div class="d"><b>Overcharge</b> — raises your max Slow-Mo energy.</div></div>'+
-      '<div class="instr"><span class="k">🌀</span><div class="d"><b>Conservation</b> — Slow-Mo drains slower.</div></div>'+
-    '</div>'+
-    '<p>Just like Levels, your build resets at the start of every run — so every attempt is a fresh set of picks.</p>' },
-  { mode:'endless', title:'Ready?', body:
-    '<p>That\'s everything you need to get started. Let\'s put it to use — your first run starts now, in <b>Endless mode</b>. Good luck out there.</p>', cta:'START ENDLESS RUN' }
+let inTutorialLevel = false;   // the rigged Level 1 (core can't actually die, player can't die)
+let tutorialActive = false;    // the coach walkthrough is running
+let tutorialFrozen = false;    // sim paused for a "message" beat the player is reading
+let tutorialStep = 0;
+let tutorialArrowSpec = null;  // what the on-canvas arrow currently points at (see tutorialArrowPoint)
+let tutHighlightEl = null;     // DOM element currently ringed by the coach
+let tutFeedTimer = 0;          // spacing between practice shots spawned during action beats
+const tutFlags = { jump:false, dash:false, slow:false, picked:false };
+const tutBaseline = { sever:0, x:0, y:0 };
+
+// each step is either a MESSAGE beat (has a button; sim frozen while reading) or an ACTION
+// beat (has `wait`; sim runs, auto-advances once the player does the thing). Optional:
+//   arrow      — 'core' | 'player' | 'proj' | {el:'<id>'}  (drawn on the canvas each frame)
+//   highlight  — DOM element id to ring while the step is active
+//   feed       — keep spawning gentle practice shots during this action beat
+//   onEnter    — hook fired when the step begins (e.g. spawn a shot, open the upgrade pick)
+const TUT_STEPS = [
+  { badge:'LEVELS MODE', title:'Welcome to Pulse Arena', arrow:'core',
+    text:'That pulsing <b>core</b> at the center fires waves of projectiles outward. Your ship weaves through them — and in <b>Levels mode</b>, fights back. Let\'s learn how, hands-on.' },
+  { badge:'LEVELS MODE', title:'Move', arrow:'player', wait:'move', waitPrompt:'Move to continue',
+    text:'This is your ship. Get a feel for it — move around with <span class="k">WASD</span> or the <span class="k">arrow keys</span>.' },
+  { badge:'LEVELS MODE', title:'Severing', arrow:'core',
+    text:'Every shot drags a glowing <b>tail</b> behind it. Cut through that tail and the shot is destroyed — and the core takes damage. Severing is how you win a level.' },
+  { badge:'LEVELS MODE', title:'Sever a Shot', arrow:'proj', wait:'sever', feed:true, waitPrompt:'Sever a shot to continue',
+    text:'Here come some shots. Weave your ship through a shot\'s trailing tail to <b>sever</b> it.' },
+  { badge:'LEVELS MODE', title:'Jump', arrow:'player', wait:'jump', feed:true, waitPrompt:'Press SPACE to continue',
+    text:'Shots hug the ground. Press <span class="k">SPACE</span> to <b>jump</b> over them — it locks your direction until you land, so it\'s a committed dodge, not free movement.' },
+  { badge:'LEVELS MODE', title:'Dash', arrow:'player', wait:'dash', feed:true, waitPrompt:'Press SHIFT to continue',
+    text:'Press <span class="k">SHIFT</span> to <b>dash</b> — a quick burst with full invulnerability. You can\'t dash mid-jump.' },
+  { badge:'LEVELS MODE', title:'Slow-Mo', arrow:{el:'abSlow'}, highlight:'abSlow', wait:'slow', feed:true, waitPrompt:'Press E to continue',
+    text:'Press <span class="k">E</span> for <b>Slow-Mo</b> — it slows every shot so you can thread through them or line up a sever. It drains as it runs and recharges on its own.' },
+  { badge:'LEVELS MODE', title:'Upgrades', arrow:{el:'upgradePanel'}, highlight:'upgradePanel',
+    text:'As you play you\'ll earn <b>upgrade picks</b> — some boost your stats, others unlock whole new abilities on <span class="k">Q</span>, <span class="k">F</span>, and <span class="k">R</span>. Here comes your first.' },
+  { title:'Upgrades', hideCoach:true, wait:'pick', onEnter:()=>{ enterLevelUp(); } },
+  { badge:'LEVELS MODE', title:'Nice Pick',
+    text:'Picks like that recur every so often. Your whole build <b>resets at the start of every level or run</b>, so each attempt is a fresh set of choices.' },
+  { badge:'LEVELS MODE', title:'Destroying the Core', arrow:'core',
+    text:'Keep severing to drain the core. There\'s no timer in Levels mode — a level ends the instant the core\'s health hits <b>zero</b>.' },
+  { badge:'LEVELS MODE', title:'Levels & Stars',
+    text:'There are <b>20 levels</b>, each harder than the last. Clearing one unlocks the next, and your best clear time earns <b>1 to 3 stars</b> — just finishing is worth one, speed-running earns all three.' },
+  { badge:'ENDLESS MODE', title:'Endless Mode',
+    text:'There\'s also <b>Endless mode</b>: no core and nothing to sever — you just survive as long as you can for a rising score, using the same movement, jump, dash, and slow-mo.' },
+  { badge:'ENDLESS MODE', title:'Endless Upgrades',
+    text:'Endless swaps in survival upgrades instead — <b>Second Chance</b> absorbs a fatal hit, <b>Adrenaline Rush</b> boosts your score, <b>Overcharge</b> raises your Slow-Mo energy, and <b>Conservation</b> makes it drain slower.' },
+  { badge:'LEVELS MODE', title:'You\'re Ready', cta:'FINISH',
+    text:'That\'s everything. Pick a mode from the menu and jump in — good luck out there.' }
 ];
-const TUTORIAL_PRACTICE_AFTER_SLIDE = 4; // index of the last Levels-chapter slide — practice slots in right after it
-let tutorialIndex = 0;
 
-function renderTutorialSlide(){
-  document.getElementById('tutorialDots').style.display = '';
-  document.getElementById('tutorialBadge').style.display = '';
-  document.getElementById('tutorialSlideNav').style.display = '';
-  document.getElementById('tutorialSkipBtn').style.display = '';
-  document.getElementById('tutorialContinueBtn').style.display = 'none';
-  const slide = TUTORIAL_SLIDES[tutorialIndex];
-  const badge = document.getElementById('tutorialBadge');
-  badge.textContent = slide.mode==='endless' ? 'ENDLESS MODE' : 'LEVELS MODE';
-  badge.classList.toggle('endless', slide.mode==='endless');
-  document.getElementById('tutorialTitle').textContent = slide.title;
-  document.getElementById('tutorialBody').innerHTML = slide.body;
-  document.getElementById('tutorialBackBtn').style.display = tutorialIndex===0 ? 'none' : '';
-  document.getElementById('tutorialNextBtn').textContent = slide.cta || 'NEXT';
-  document.getElementById('tutorialDots').innerHTML = TUTORIAL_SLIDES.map((_,i)=>
-    '<div class="dot'+(i===tutorialIndex ? ' active' : i<tutorialIndex ? ' done' : '')+'"></div>'
-  ).join('');
+const coachBox = document.getElementById('coachBox');
+
+function tutorialArrowPoint(){
+  const spec = tutorialArrowSpec;
+  if(!spec) return null;
+  if(spec==='core') return { x:CX, y:CY };
+  if(spec==='player') return { x:player.x, y:player.y };
+  if(spec==='proj'){
+    const live = projectiles.filter(p=>!p.dead);
+    if(!live.length) return null;
+    const p = live[live.length-1];
+    return { x:p.x, y:p.y };
+  }
+  if(spec && spec.el){
+    const el = document.getElementById(spec.el);
+    if(!el) return null;
+    const r = el.getBoundingClientRect();
+    if(r.width===0 && r.height===0) return null;
+    return { x:r.left+r.width/2, y:r.top+r.height/2 };
+  }
+  return null;
 }
 
-function showTutorial(){
-  tutorialIndex = 0;
+function renderCoachStep(){
+  const step = TUT_STEPS[tutorialStep];
+  if(step.hideCoach){ coachBox.classList.add('hidden'); return; }
+  coachBox.classList.remove('hidden');
+  coachBox.classList.toggle('action', !!step.wait);
+  document.getElementById('coachBadge').textContent = step.badge || 'TUTORIAL';
+  const titleEl = document.getElementById('coachTitle');
+  titleEl.textContent = step.title || '';
+  titleEl.style.display = step.title ? '' : 'none';
+  document.getElementById('coachText').innerHTML = step.text || '';
+  document.getElementById('coachProgress').textContent = 'Step ' + (tutorialStep+1) + ' of ' + TUT_STEPS.length;
+  const btn = document.getElementById('coachBtn');
+  const wait = document.getElementById('coachWait');
+  if(step.wait){
+    btn.style.display = 'none';
+    wait.style.display = '';
+    wait.textContent = step.waitPrompt || 'Try it to continue';
+  } else {
+    btn.style.display = '';
+    btn.textContent = step.cta || 'GOT IT';
+    wait.style.display = 'none';
+  }
+}
+
+function runTutorialStep(){
+  const step = TUT_STEPS[tutorialStep];
+  // drop any highlight from the previous step
+  if(tutHighlightEl){ tutHighlightEl.classList.remove('coach-highlight'); tutHighlightEl = null; }
+  tutorialArrowSpec = step.arrow || null;
+  if(step.highlight){
+    const el = document.getElementById(step.highlight);
+    if(el){ el.classList.add('coach-highlight'); tutHighlightEl = el; }
+  }
+  // message beats freeze the sim to read; action beats let it run
+  tutorialFrozen = !step.wait;
+  if(step.wait){
+    tutFlags.jump = tutFlags.dash = tutFlags.slow = tutFlags.picked = false;
+    tutBaseline.sever = severCount;
+    tutBaseline.x = player.x; tutBaseline.y = player.y;
+    tutFeedTimer = 0.4;
+  }
+  for(const k in pressedEdge) pressedEdge[k] = false; // don't carry a stale press into the step
+  if(step.onEnter) step.onEnter();
+  renderCoachStep();
+}
+
+function advanceTutorial(){
+  tutorialStep++;
+  if(tutorialStep >= TUT_STEPS.length){ finishTutorial(); return; }
+  runTutorialStep();
+}
+
+function tutorialWaitMet(key){
+  switch(key){
+    case 'move': return Math.hypot(player.x-tutBaseline.x, player.y-tutBaseline.y) > R*0.14;
+    case 'sever': return severCount > tutBaseline.sever;
+    case 'jump': return tutFlags.jump;
+    case 'dash': return tutFlags.dash;
+    case 'slow': return tutFlags.slow;
+    case 'pick': return tutFlags.picked;
+  }
+  return false;
+}
+
+// runs each frame while the coach is on an action beat: feeds practice shots and checks
+// whether the player has done the thing this beat is waiting on
+function updateTutorial(dt){
+  if(!tutorialActive) return;
+  const step = TUT_STEPS[tutorialStep];
+  if(!step || !step.wait) return;
+  if(step.feed){
+    tutFeedTimer -= dt;
+    const live = projectiles.filter(p=>!p.dead).length + (pendingSpawn ? 1 : 0);
+    if(tutFeedTimer<=0 && live<2){ spawnStraight(); tutFeedTimer = 1.6; }
+  }
+  if(tutorialWaitMet(step.wait)) advanceTutorial();
+}
+
+function startTutorial(){
   document.getElementById('menuOverlay').classList.add('hidden');
-  document.getElementById('tutorialOverlay').classList.remove('hidden');
-  renderTutorialSlide();
-}
-
-// the hands-on Level 1 practice: a brief heads-up, then an actual live attempt (rigged so it
-// can't be won), then a short breather before the slides resume with the Endless chapter.
-// Swaps in fresh title/body/button content and (via cloning) a fresh click handler, so each
-// practice screen can't accidentally trigger the previous screen's action.
-function showPracticeScreen(title, body, btnLabel, onContinue){
-  document.getElementById('tutorialDots').style.display = 'none';
-  document.getElementById('tutorialBadge').style.display = 'none';
-  document.getElementById('tutorialSlideNav').style.display = 'none';
-  document.getElementById('tutorialSkipBtn').style.display = 'none';
-  document.getElementById('tutorialTitle').textContent = title;
-  document.getElementById('tutorialBody').innerHTML = body;
-  const oldBtn = document.getElementById('tutorialContinueBtn');
-  const btn = oldBtn.cloneNode(true);
-  oldBtn.parentNode.replaceChild(btn, oldBtn);
-  btn.textContent = btnLabel;
-  btn.style.display = '';
-  btn.addEventListener('click', onContinue);
-  document.getElementById('menuOverlay').classList.add('hidden');
-  document.getElementById('goOverlay').classList.add('hidden');
-  document.getElementById('tutorialOverlay').classList.remove('hidden');
-}
-
-function showTutorialBriefing(){
-  showPracticeScreen(
-    "Let's Try Level 1",
-    '<div class="instructions">'+
-      '<div class="instr"><span class="k">WASD</span><div class="d">Move (arrow keys work too)</div></div>'+
-      '<div class="instr"><span class="k">SPACE</span><div class="d">Jump over <b>ground</b> shots</div></div>'+
-      '<div class="instr"><span class="k">SHIFT</span><div class="d">Dash — a brief invulnerable burst</div></div>'+
-      '<div class="instr"><span class="k">E</span><div class="d">Slow-Mo — press to slow every shot</div></div>'+
-    '</div>'+
-    '<p>Every shot trails a tail behind it — cutting through that tail destroys it and damages the core. Give it a shot and see how it feels to dodge and fight back.</p>',
-    'START',
-    beginTutorialLevel
-  );
-}
-
-function beginTutorialLevel(){
-  document.getElementById('tutorialOverlay').classList.add('hidden');
   inTutorialLevel = true;
   startLevel(1);
+  nextUpgradeAt = Infinity; // no organic upgrade pauses — the tutorial scripts its own
+  tutorialActive = true;
+  tutorialStep = 0;
+  runTutorialStep();
 }
 
-// called instead of the normal result screen once the rigged practice attempt ends,
-// whichever way it ends (death or running out the clock)
-function endTutorialLevel(){
-  inTutorialLevel = false;
-  showPracticeScreen(
-    'Nice Work',
-    '<p>That\'s the feel of dodging and severing. Let\'s cover <b>Endless mode</b> next.</p>',
-    'CONTINUE',
-    resumeTutorialAfterPractice
-  );
-}
-
-function resumeTutorialAfterPractice(){
-  tutorialIndex = TUTORIAL_PRACTICE_AFTER_SLIDE + 1;
-  renderTutorialSlide();
-}
-
-function endTutorial(startRun){
+function finishTutorial(){
   localStorage.setItem(TUTORIAL_SEEN_KEY, '1');
-  document.getElementById('tutorialOverlay').classList.add('hidden');
-  if(startRun) startEndless();
-  else showMenu();
+  tutorialActive = false;
+  tutorialFrozen = false;
+  inTutorialLevel = false;
+  tutorialArrowSpec = null;
+  if(tutHighlightEl){ tutHighlightEl.classList.remove('coach-highlight'); tutHighlightEl = null; }
+  coachBox.classList.add('hidden');
+  showMenu();
 }
 
 function setPaused(p){
@@ -1117,7 +1203,7 @@ function renderLevelGrid(){
 }
 
 function showResultScreen(){
-  if(inTutorialLevel){ endTutorialLevel(); return; }
+  if(inTutorialLevel) return; // the tutorial never reaches a real result screen — it can't be won or lost
   const titleEl = document.getElementById('goTitle');
   const pctEl = document.getElementById('goPercent');
   const lsBtn = document.getElementById('levelSelectBtn');
@@ -1235,16 +1321,10 @@ document.getElementById('closeHowToPlayBtn').addEventListener('click', ()=>{
   document.getElementById('howToPlayOverlay').classList.add('hidden');
   document.getElementById('menuOverlay').classList.remove('hidden');
 });
-document.getElementById('tutorialNextBtn').addEventListener('click', ()=>{
-  if(tutorialIndex === TUTORIAL_PRACTICE_AFTER_SLIDE){ showTutorialBriefing(); return; }
-  if(tutorialIndex >= TUTORIAL_SLIDES.length-1){ endTutorial(true); return; }
-  tutorialIndex++;
-  renderTutorialSlide();
+document.getElementById('coachBtn').addEventListener('click', ()=>{
+  if(tutorialActive && !TUT_STEPS[tutorialStep].wait) advanceTutorial();
 });
-document.getElementById('tutorialBackBtn').addEventListener('click', ()=>{
-  if(tutorialIndex>0){ tutorialIndex--; renderTutorialSlide(); }
-});
-document.getElementById('tutorialSkipBtn').addEventListener('click', ()=> endTutorial(false));
+document.getElementById('coachSkip').addEventListener('click', finishTutorial);
 
 document.getElementById('testModeBtn').addEventListener('click', ()=>{
   testMode = !testMode;
@@ -1667,6 +1747,7 @@ function choosePendingUpgrade(i){
   const u = currentChoices[i];
   if(!u) return;
   u.apply();
+  if(tutorialActive) tutFlags.picked = true;
   currentChoices = [];
   document.getElementById('levelOverlay').classList.add('hidden');
   for(const k in pressedEdge) pressedEdge[k] = false; // don't carry the pick-keypress into gameplay
@@ -2082,6 +2163,7 @@ function onJumpPressed(mx, my){
   // on the jumpCd timer; forbidden mid-dash so the two i-frame windows can't chain into
   // near-permanent invulnerability
   if(player.jumpCharges<=0 || player.dashT>0) return;
+  if(tutorialActive) tutFlags.jump = true;
   playAbilitySfx('jump');
   player.jumpDurActive = jumpDurMax();
   player.jumpT = player.jumpDurActive;
@@ -2113,6 +2195,7 @@ function onAbility2Pressed(){ // Slow-Mo — press to toggle, not hold; once on 
     playAbilitySfx('slowOff');
   } else if(player.slowEnergy > ABILITY.SLOW_MIN_TO_USE){
     player.slowActive = true;
+    if(tutorialActive) tutFlags.slow = true;
     playAbilitySfx('slowOn');
   }
 }
@@ -2137,6 +2220,7 @@ function updateSlowMo(dt){
 function onAbility3Pressed(mx, my){ // Dash — forbidden mid-hop, so jump+dash can't chain
   // into near-permanent invulnerability
   if(player.dashCd>0 || player.jumpT>0) return;
+  if(tutorialActive) tutFlags.dash = true;
   playAbilitySfx('dash');
   let dx=mx, dy=my;
   if(Math.hypot(mx,my)===0){ dx=Math.cos(player.facing); dy=Math.sin(player.facing); }
@@ -2407,6 +2491,7 @@ function updateParticles(dt){
 // sniper/laser already telegraph their own aim; every other attack gets a brief universal
 // core wind-up instead of firing instantly, giving the core a visible tell before it acts
 function updateSpawner(dt){
+  if(tutorialActive) return; // the tutorial hand-feeds its own practice shots via updateTutorial
   const sf = projSlowFactor();
   if(pendingSpawn){
     pendingSpawn.windupT += dt*sf;
@@ -2444,6 +2529,9 @@ function checkCollisions(){
   // a sever/nova/trail kill this same frame may already have ended the level (core
   // destroyed -> explosion/upgrade sequence) — don't let a stale hit still register after that
   if(state!=='playing') return;
+  // the tutorial is forgiving — a mistimed dodge shouldn't end the lesson, so shots pass
+  // harmlessly through the player. Severing still works (that's checkSevers, separate).
+  if(tutorialActive) return;
   const invuln = player.dashT>0 || player.invincT>0;
   // test mode is a pure sandbox for testing severing/deflection/core damage — shots just
   // pass through the player with no effect at all, not even a no-sell flash. still worth
@@ -3027,6 +3115,41 @@ function render(){
   drawProjectiles();
   drawPlayer();
   ctx.restore();
+  drawTutorialArrow(); // in plain screen space, on top of the shaken scene
+}
+
+// a bobbing arrow + pulsing ring dropped on whatever the current tutorial step points at
+function drawTutorialArrow(){
+  if(!tutorialActive) return;
+  const T = tutorialArrowPoint();
+  if(!T) return;
+  const now = performance.now()/1000;
+  const bob = Math.sin(now*4)*6;
+  const ringR = 24 + Math.sin(now*4)*3;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,171,74,0.95)';
+  ctx.fillStyle = 'rgba(255,171,74,0.95)';
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(T.x, T.y, ringR, 0, Math.PI*2); ctx.stroke();
+  // chevron sits below the target and points up at it — unless the target is low on screen,
+  // in which case it sits above and points down, so it never runs off the bottom edge
+  const pointUp = T.y > H*0.30;
+  const gap = ringR + 14 + bob;
+  const tipY = pointUp ? T.y - gap : T.y + gap;      // arrow tip (touches the ring)
+  const baseY = pointUp ? tipY - 22 : tipY + 22;      // far end of the shaft
+  const dir = pointUp ? 1 : -1;                       // +1 = tip is above base
+  ctx.beginPath();
+  ctx.moveTo(T.x, tipY);
+  ctx.lineTo(T.x - 11, tipY + dir*13);
+  ctx.lineTo(T.x - 4, tipY + dir*13);
+  ctx.lineTo(T.x - 4, baseY);
+  ctx.lineTo(T.x + 4, baseY);
+  ctx.lineTo(T.x + 4, tipY + dir*13);
+  ctx.lineTo(T.x + 11, tipY + dir*13);
+  ctx.closePath();
+  ctx.shadowColor = 'rgba(255,171,74,0.8)'; ctx.shadowBlur = 12;
+  ctx.fill();
+  ctx.restore();
 }
 
 // ================= HUD =================
@@ -3208,11 +3331,11 @@ function frame(now){
     }
   }
 
-  if(state==='playing' && !paused){
+  if(state==='playing' && !paused && !tutorialFrozen){
     elapsed += dt;
     // levels mode used to auto-win after a fixed 60s survival timer; now destroying the
     // core is the only way to win, so play just continues indefinitely until then
-    if(gameMode==='levels'){
+    if(gameMode==='levels' && !tutorialActive){ // the tutorial hand-scripts its own spawns
       if(!openerFired && elapsed >= 1.2){
         openerFired = true;
         const pat = pickLevelPattern(0);
@@ -3224,9 +3347,7 @@ function frame(now){
         const pat = pickLevelPattern(1);
         if(pat) triggerLevelPattern(pat);
       }
-      // the rigged tutorial attempt can't be won, so cut it short even if the player never dies
-      if(inTutorialLevel && elapsed >= TUTORIAL_LEVEL_TIME_LIMIT) failLevel();
-    } else { // endless
+    } else if(gameMode==='endless'){
       if(!phaseChangeFired && elapsed >= 30){ phaseChangeFired = true; corePhase = 2; }
       // score grows continuously, scaled by the same difficulty curve driving the spawner,
       // plus Adrenaline Rush's flat percentage bonus on top
@@ -3283,6 +3404,7 @@ function frame(now){
     shakeT -= dt;
     if(shakeT<=0){ shakeT=0; shakeMag=0; shakeMax=0; } // reset fully once a shake naturally ends
   }
+  if(tutorialActive && !tutorialFrozen) updateTutorial(dt);
   updateMusic();
   updateHud();
   render();
@@ -3296,7 +3418,7 @@ requestAnimationFrame(frame);
 // (and anyone who skips it) just sees the normal menu, with the same content available
 // on demand via the HOW TO PLAY button
 if(localStorage.getItem(TUTORIAL_SEEN_KEY)) showMenu();
-else showTutorial();
+else startTutorial();
 
 })();
 </script>
