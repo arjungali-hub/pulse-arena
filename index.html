@@ -243,6 +243,20 @@
   .pvp-bar-fill{ height:100%; width:100%; background:var(--p1,#5be3ff); transition:width .1s linear; }
   .pvp-panel.right .pvp-bar-fill{ background:var(--p2,#ff5bd8); }
 
+  /* on-screen control reference — multiplayer controls differ from single-player, so each
+     player's are pinned to their own side for the whole match */
+  .pvp-ctrl-side{ position:fixed; top:50%; transform:translateY(-50%); z-index:20;
+                  padding:10px 12px; border-radius:12px; pointer-events:none;
+                  background:rgba(8,11,20,.62); border:1.5px solid var(--p1,#5be3ff); }
+  .pvp-ctrl-side.left{ left:14px; }
+  .pvp-ctrl-side.right{ right:14px; text-align:right; border-color:var(--p2,#ff5bd8); }
+  .pvp-ctrl-side.hidden{ display:none; }
+  .pcs-who{ font-size:12px; font-weight:800; letter-spacing:.14em; color:var(--p1,#5be3ff); margin-bottom:6px; }
+  .pvp-ctrl-side.right .pcs-who{ color:var(--p2,#ff5bd8); }
+  .pcs-row{ display:flex; gap:12px; justify-content:space-between; font-size:11.5px; color:var(--dim); line-height:1.9; }
+  .pvp-ctrl-side.right .pcs-row{ flex-direction:row-reverse; }
+  .pcs-row b{ color:var(--text); font-weight:700; }
+
   /* ---- PvP sub-mode + result cards ---- */
   .pvp-opt-cards{ display:flex; gap:22px; justify-content:center; flex-wrap:wrap; margin:18px 0 10px; }
   .pvp-opt{ width:300px; padding:26px 22px; border-radius:20px; cursor:pointer; text-align:left;
@@ -471,6 +485,18 @@
       <div class="pvp-bar"><div class="pvp-bar-fill" id="pvpSlowP2"></div></div>
     </div>
   </div>
+  <div class="pvp-ctrl-side left hidden" id="pvpCtrlP1">
+    <div class="pcs-who">P1</div>
+    <div class="pcs-row"><span>Move</span><b>WASD</b></div>
+    <div class="pcs-row"><span>Jump</span><b>Space</b></div>
+    <div class="pcs-row"><span>Dash</span><b>Shift</b></div>
+  </div>
+  <div class="pvp-ctrl-side right hidden" id="pvpCtrlP2">
+    <div class="pcs-who">P2</div>
+    <div class="pcs-row"><span>Move</span><b>Arrows</b></div>
+    <div class="pcs-row"><span>Jump</span><b>/</b></div>
+    <div class="pcs-row"><span>Dash</span><b>.</b></div>
+  </div>
 </div>
 
 <div class="overlay hidden" id="menuOverlay">
@@ -521,11 +547,11 @@
     <div class="pvp-controls">
       <div class="pvp-ctrl-col p1">
         <div class="who">PLAYER 1</div>
-        Move <b>W A S D</b><br>Jump <b>Space</b><br>Dash <b>Left Shift</b><br>Slow-Mo <b>E</b>
+        Move <b>W A S D</b><br>Jump <b>Space</b><br>Dash <b>Left Shift</b>
       </div>
       <div class="pvp-ctrl-col p2">
         <div class="who">PLAYER 2</div>
-        Move <b>Arrow Keys</b><br>Jump <b>/</b><br>Dash <b>.</b><br>Slow-Mo <b>,</b>
+        Move <b>Arrow Keys</b><br>Jump <b>/</b><br>Dash <b>.</b>
       </div>
     </div>
     <div class="pvp-opt-cards">
@@ -549,11 +575,11 @@
     <div class="pvp-controls">
       <div class="pvp-ctrl-col p1">
         <div class="who">PLAYER 1</div>
-        Move <b>W A S D</b><br>Jump <b>Space</b><br>Dash <b>Left Shift</b><br>Slow-Mo <b>E</b>
+        Move <b>W A S D</b><br>Jump <b>Space</b><br>Dash <b>Left Shift</b>
       </div>
       <div class="pvp-ctrl-col p2">
         <div class="who">PLAYER 2</div>
-        Move <b>Arrow Keys</b><br>Jump <b>/</b><br>Dash <b>.</b><br>Slow-Mo <b>,</b>
+        Move <b>Arrow Keys</b><br>Jump <b>/</b><br>Dash <b>.</b>
       </div>
     </div>
     <div class="pvp-opt-cards">
@@ -737,20 +763,21 @@ function consumeActionPress(action){ for(const k of (activeKeybinds[action]||[])
 // ---------- PvP: two players on one keyboard ----------
 // fixed control sets, one per player. Every action name the single-player kit checks must be
 // present (unused ones bound to nothing) so isActionPressed('ability1') etc. never trip on an
-// undefined bind. PvP players only get the baseline kit: move, jump, dash, slow-mo.
+// undefined bind. Multiplayer players get only Move, Jump (space/`/`) and Dash (shift/`.`) —
+// no Slow-Mo (ability2) or the unlockable Q/F/R abilities.
 const PVP_KB_P1 = {
   moveUp:['w'], moveDown:['s'], moveLeft:['a'], moveRight:['d'],
-  jump:[' '], ability3:['shift'], ability2:['e'],
-  ability1:[], ability4:[], ability5:[]
+  jump:[' '], ability3:['shift'],
+  ability1:[], ability2:[], ability4:[], ability5:[]
 };
 const PVP_KB_P2 = {
   moveUp:['arrowup'], moveDown:['arrowdown'], moveLeft:['arrowleft'], moveRight:['arrowright'],
-  jump:['/'], ability3:['.'], ability2:[','],
-  ability1:[], ability4:[], ability5:[]
+  jump:['/'], ability3:['.'],
+  ability1:[], ability2:[], ability4:[], ability5:[]
 };
-// the physical keys PvP owns — used to swallow browser defaults (quick-find on '/', scroll on
-// arrows/space) while a PvP match is live
-const PVP_KEYS = new Set(['w','a','s','d',' ','shift','e','arrowup','arrowdown','arrowleft','arrowright','/','.',',']);
+// the physical keys multiplayer owns — used to swallow browser defaults (quick-find on '/',
+// scroll on arrows/space) while a 2-player match is live
+const PVP_KEYS = new Set(['w','a','s','d',' ','shift','arrowup','arrowdown','arrowleft','arrowright','/','.']);
 
 // ---------- rebinding UI ----------
 // human-readable label for any physical key string used above
@@ -1016,13 +1043,13 @@ function multi(){ return pvp || coop; }
 // the shared upgrade-pick beat: both players choose at once from their own 3 cards
 let multiUpgradeActive = false;
 let multiPicks = null; // [{choices, cursor, confirmed}, {...}] while a pick is open
-const PVP_RESPAWN_DELAY = 4;  // seconds a race death costs you before you're back in
+const PVP_RESPAWN_DELAY = 7;  // seconds a race death costs you before you're back in
 const PVP_HALF_HP = 100;      // each player's half of the core in race mode
 const PVP_RACE_LEVEL = 6;     // fixed difficulty for race (no ramp — a pure sever race)
 const PVP_P1_COLOR = '#5be3ff', PVP_P2_COLOR = '#ff5bd8';
 // co-op: teammates share one core. You respawn after a delay — but if your partner falls
 // while you're still down, you're both out at once and the run ends.
-const COOP_RESPAWN_DELAY = 4;
+const COOP_RESPAWN_DELAY = 7;
 const COOP_TAKEDOWN_LEVEL = 9; // fixed difficulty for the shared-core takedown fight
 const COOP_CORE_HP = 220;      // beefier than a solo core — it's two players chipping it
 const COOP_P1_COLOR = '#5be3ff', COOP_P2_COLOR = '#6bffb0'; // cyan + green: same team, still distinct
@@ -1243,9 +1270,17 @@ function startPvp(mode){
 
   document.documentElement.style.setProperty('--p1', PVP_P1_COLOR);
   document.documentElement.style.setProperty('--p2', PVP_P2_COLOR);
-  document.getElementById('pvpHud').classList.remove('hidden');
+  setPvpHud(true);
   hideAllOverlays();
   document.getElementById('pvpOverlay').classList.add('hidden');
+}
+
+// show/hide the whole multiplayer HUD: the two top status panels plus the side control
+// reference cards (multiplayer controls differ from single-player, so they stay on screen)
+function setPvpHud(show){
+  document.getElementById('pvpHud').classList.toggle('hidden', !show);
+  document.getElementById('pvpCtrlP1').classList.toggle('hidden', !show);
+  document.getElementById('pvpCtrlP2').classList.toggle('hidden', !show);
 }
 
 function updatePvpHud(){
@@ -1270,16 +1305,16 @@ function updatePvpHud(){
       else statEl.textContent = Math.round(Math.max(0,coreHP)/coreMaxHP*100)+'% core';
       statEl.classList.remove('out');
     }
-    // slow-mo energy bar
+    // dash-cooldown bar — fills back up as Dash recharges (no Slow-Mo in multiplayer)
     const prev = player; player = p;
-    const frac = Math.max(0, Math.min(1, p.slowEnergy/slowEnergyMax()));
+    const frac = p.dashCd<=0 ? 1 : Math.max(0, Math.min(1, 1 - p.dashCd/dashCdMax()));
     player = prev;
     document.getElementById('pvpSlow'+'P'+n).style.width = (frac*100)+'%';
   }
 }
 
 function showPvpResult(winner){
-  document.getElementById('pvpHud').classList.add('hidden');
+  setPvpHud(false);
   const sub = document.getElementById('pvpResultSub');
   const winTxt = document.getElementById('pvpWinnerText');
   const stat = document.getElementById('pvpResultStat');
@@ -1307,7 +1342,7 @@ function exitPvp(){
   pvp = false; pvpMode = null; coop = false; coopMode = null; players = null; pvpOver = false;
   activeKeybinds = keybinds;
   player = makePlayerObjectSafe();
-  document.getElementById('pvpHud').classList.add('hidden');
+  setPvpHud(false);
   document.getElementById('pvpResultOverlay').classList.add('hidden');
 }
 // after a match, restore a clean single-player `player` so the rest of the game (HUD reads,
@@ -1352,13 +1387,13 @@ function startCoop(mode){
 
   document.documentElement.style.setProperty('--p1', COOP_P1_COLOR);
   document.documentElement.style.setProperty('--p2', COOP_P2_COLOR);
-  document.getElementById('pvpHud').classList.remove('hidden');
+  setPvpHud(true);
   hideAllOverlays();
   document.getElementById('coopOverlay').classList.add('hidden');
 }
 
 function showCoopResult(won){
-  document.getElementById('pvpHud').classList.add('hidden');
+  setPvpHud(false);
   const sub = document.getElementById('pvpResultSub');
   const winTxt = document.getElementById('pvpWinnerText');
   const stat = document.getElementById('pvpResultStat');
@@ -2641,13 +2676,12 @@ function buildUpgradePool(){
       apply:()=>{ player.up.respawnGuard = (player.up.respawnGuard||0)+1; } }
   ];
   if(multi()){
-    // in a 2-player match, offer only upgrades that actually do something with the baseline
-    // kit in this specific mode — no ability unlocks (no Q/F/R keys or HUD for a 2nd player)
+    // in a 2-player match the kit is just Move / Jump / Dash — so offer only upgrades that do
+    // something with that (no ability unlocks, no Slow-Mo upgrades). Respawn upgrades appear
+    // only in modes where you actually respawn.
     const respawnMode = (pvpMode==='race') || coop;   // modes where you come back after dying
-    const coreMode = (pvpMode==='race') || (coopMode==='takedown'); // modes with a core to sever
-    const ok = new Set(['extraJump','legs','reflex','slim','shieldCharge','slowMaxBoost','slowEfficiency','dashPower']);
+    const ok = new Set(['extraJump','legs','reflex','slim','shieldCharge','dashPower']);
     if(respawnMode){ ok.add('respawnFast'); ok.add('respawnGuard'); }
-    if(coreMode){ ok.add('slowPull'); }
     return pool.filter(u=>ok.has(u.id));
   }
   return pool.filter(u => gameMode==='endless' ? u.endlessEligible!==false : u.levelsEligible!==false);
@@ -4187,9 +4221,11 @@ function drawPlayer(){
 
   // i-frame ghosting: while dashing or invincible, trail a few faded copies behind the
   // player along its current heading, to visually sell the window where hits don't count
-  if(player.dashT>0 || player.invincT>0){
-    const gvx = player.dashT>0 ? player.dashVX : Math.cos(player.facing);
-    const gvy = player.dashT>0 ? player.dashVY : Math.sin(player.facing);
+  // dash ghosting: only while actually dashing, trail a few faded copies behind the player
+  // along its heading to sell the fast motion. Invulnerability is shown by the blink above —
+  // a stationary respawned player must not sprout a line of static ghost arrows behind it.
+  if(player.dashT>0){
+    const gvx = player.dashVX, gvy = player.dashVY;
     for(let i=GHOST_COUNT;i>=1;i--){
       const fade = GHOST_ALPHA*(1-(i-1)/GHOST_COUNT);
       drawPlayerShip(player.x - gvx*i*GHOST_SPACING, player.y - gvy*i*GHOST_SPACING, fade);
