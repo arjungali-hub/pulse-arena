@@ -260,6 +260,22 @@
   .pvp-ctrl-col.p2 .who{ color:var(--magenta); }
   .pvp-winner{ font-size:44px; font-weight:800; letter-spacing:.04em; margin-bottom:4px; }
 
+  /* ---- multiplayer shared upgrade pick ---- */
+  .multi-up-cols{ display:flex; gap:26px; justify-content:center; flex-wrap:wrap; }
+  .multi-up-col{ flex:1 1 300px; max-width:340px; }
+  .multi-up-head{ font-size:13px; font-weight:800; letter-spacing:.14em; color:var(--pc,#5be3ff); margin-bottom:10px; }
+  .multi-up-cards{ display:flex; flex-direction:column; gap:8px; }
+  .multi-up-card{ padding:12px 14px; border-radius:12px; text-align:left;
+                  background:rgba(255,255,255,.03); border:1.5px solid rgba(255,255,255,.1);
+                  opacity:.55; transition:opacity .1s ease, border-color .1s ease, background .1s ease; }
+  .multi-up-card.sel{ opacity:1; border-color:var(--pc,#5be3ff); background:rgba(255,255,255,.07);
+                      box-shadow:0 0 16px -4px var(--pc,#5be3ff); }
+  .multi-up-card.locked{ opacity:.4; }
+  .muc-name{ font-size:15px; font-weight:800; color:var(--text); margin-bottom:3px; }
+  .muc-desc{ font-size:12px; color:var(--dim); line-height:1.4; }
+  .muc-hint{ font-size:10.5px; color:var(--dim); letter-spacing:.08em; margin-top:8px; opacity:.7; }
+  .muc-ready{ font-size:12px; font-weight:800; letter-spacing:.12em; color:var(--pc,#5be3ff); margin-top:8px; }
+
   .bind-list{ display:flex; flex-direction:column; gap:8px; margin:18px 0; text-align:left; }
   .bind-row{
     display:flex; align-items:center; justify-content:space-between; gap:14px;
@@ -562,6 +578,17 @@
     <div style="display:flex; gap:12px; justify-content:center; margin-top:4px; flex-wrap:wrap;">
       <button class="cta" id="pvpRematchBtn" style="min-width:210px;">REMATCH</button>
       <button class="cta ghost" id="pvpMenuBtn" style="min-width:210px;">MAIN MENU</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay hidden" id="multiUpgradeOverlay">
+  <div class="panel wide">
+    <div class="title" style="font-size:30px;">CHOOSE AN UPGRADE</div>
+    <div class="subtitle" style="margin-bottom:14px;">Both players pick — highlight with your Move keys, confirm with Jump</div>
+    <div class="multi-up-cols">
+      <div class="multi-up-col" id="multiUpColP1"><div class="multi-up-head">PLAYER 1</div><div class="multi-up-cards" id="multiCardsP1"></div></div>
+      <div class="multi-up-col" id="multiUpColP2"><div class="multi-up-head">PLAYER 2</div><div class="multi-up-cards" id="multiCardsP2"></div></div>
     </div>
   </div>
 </div>
@@ -970,7 +997,7 @@ function makePlayerObject(){
     invincT:0,
     // PvP-only fields (harmless in single-player): identity/team + alive/respawn/score/half state
     color:'#5be3ff', kb:null, alive:true, respawnT:0, survivalTime:0, spawnAngle:Math.PI/2, halfHP:0,
-    up:{ legs:0, reflex:0, slim:0, reflectSever:0, dashTrail:0, slowPull:0, extraJump:0, shieldCharge:0, scoreMult:0, slowMaxBoost:0, slowEfficiency:0 }
+    up:{ legs:0, reflex:0, slim:0, reflectSever:0, dashTrail:0, slowPull:0, extraJump:0, shieldCharge:0, scoreMult:0, slowMaxBoost:0, slowEfficiency:0, dashPower:0, respawnFast:0, respawnGuard:0 }
   };
 }
 // `player` is the "current" player the per-player systems act on. In single-player it's the
@@ -986,6 +1013,9 @@ let players = null;           // [p1, p2] during any 2-player match, else null
 let pvpOver = false;          // match decided — stop running win checks
 // true whenever a 2-player match (versus or co-op) is running
 function multi(){ return pvp || coop; }
+// the shared upgrade-pick beat: both players choose at once from their own 3 cards
+let multiUpgradeActive = false;
+let multiPicks = null; // [{choices, cursor, confirmed}, {...}] while a pick is open
 const PVP_RESPAWN_DELAY = 4;  // seconds a race death costs you before you're back in
 const PVP_HALF_HP = 100;      // each player's half of the core in race mode
 const PVP_RACE_LEVEL = 6;     // fixed difficulty for race (no ramp — a pure sever race)
@@ -996,6 +1026,7 @@ const COOP_RESPAWN_DELAY = 4;
 const COOP_TAKEDOWN_LEVEL = 9; // fixed difficulty for the shared-core takedown fight
 const COOP_CORE_HP = 220;      // beefier than a solo core — it's two players chipping it
 const COOP_P1_COLOR = '#5be3ff', COOP_P2_COLOR = '#6bffb0'; // cyan + green: same team, still distinct
+const MULTI_UPGRADE_INTERVAL = 16; // seconds between the shared upgrade-pick beats in multiplayer
 
 const ABILITY = {
   JUMP_DUR:0.7, JUMP_CD:1.15,
@@ -1044,6 +1075,8 @@ function jumpChargeMax(){ return 1 + (player.up.extraJump||0); }
 function jumpGravity(){ const T = jumpDurMax(); return 8/(T*T); }
 function jumpLaunchVZ(){ return jumpGravity()*jumpDurMax()/2; }
 function dashCdMax(){ return Math.max(ABILITY.DASH_CD * (1 - player.up.reflex*reflexCdCut()), DASH_CD_FLOOR); }
+// Afterburner (dashPower) stretches the dash — it lasts longer, so it covers more ground
+function dashDurMax(){ return ABILITY.DASH_DUR * (1 + (player.up.dashPower||0)*0.3); }
 function slowEnergyMax(){ return 100 + (player.up.slowMaxBoost||0)*30; } // Overcharge (endless-only)
 function slowRegenRate(){ return ABILITY.SLOW_REGEN; }
 // Conservation and Slim Profile have no stack limit, so their cut fractions are clamped well
@@ -1058,7 +1091,7 @@ function updatePlayerRadius(){ player.r = playerBaseR() * (1 - Math.min(player.u
 // though PvP players have no upgrades anyway; jumpChargeMax()/radius still depend on it).
 function resetPlayerObj(p, angle, keepBuild){
   const prev = player; player = p; // jumpChargeMax()/updatePlayerRadius() read the global `player`
-  if(!keepBuild) p.up = { legs:0, reflex:0, slim:0, reflectSever:0, dashTrail:0, slowPull:0, extraJump:0, shieldCharge:0, scoreMult:0, slowMaxBoost:0, slowEfficiency:0 };
+  if(!keepBuild) p.up = { legs:0, reflex:0, slim:0, reflectSever:0, dashTrail:0, slowPull:0, extraJump:0, shieldCharge:0, scoreMult:0, slowMaxBoost:0, slowEfficiency:0, dashPower:0, respawnFast:0, respawnGuard:0 };
   updatePlayerRadius();
   const a = angle==null ? Math.PI/2 : angle;
   const rr = R*0.55;
@@ -1194,7 +1227,7 @@ function startPvp(mode){
   tutorialActive = false; inTutorialLevel = false;
 
   resetRunState();
-  nextUpgradeAt = Infinity; // no upgrade-pick pauses in PvP
+  nextUpgradeAt = MULTI_UPGRADE_INTERVAL; // recurring shared upgrade picks (both players choose)
 
   const p1 = makePlayerObject();
   p1.color = PVP_P1_COLOR; p1.kb = PVP_KB_P1; p1.spawnAngle = Math.PI*0.78; // lower-left
@@ -1303,7 +1336,7 @@ function startCoop(mode){
   tutorialActive = false; inTutorialLevel = false;
 
   resetRunState();
-  nextUpgradeAt = Infinity;
+  nextUpgradeAt = MULTI_UPGRADE_INTERVAL; // recurring shared upgrade picks (both players choose)
   if(mode==='takedown'){ coreMaxHP = COOP_CORE_HP; coreHP = COOP_CORE_HP; }
 
   const p1 = makePlayerObject();
@@ -1342,6 +1375,71 @@ function showCoopResult(won){
       : 'The core held with <b>'+Math.round(Math.max(0,coreHP)/coreMaxHP*100)+'%</b> left';
   }
   document.getElementById('pvpResultOverlay').classList.remove('hidden');
+}
+
+// ---- multiplayer shared upgrade pick: both players choose at once, each from their own 3
+// cards, using their own controls (Move left/right to highlight, Jump to confirm). The sim is
+// frozen until both have locked in.
+function enterMultiUpgrade(){
+  const prev = player;
+  multiPicks = players.map(p=>{
+    player = p; // eligible()/desc read the current player's build
+    const pool = buildUpgradePool().filter(u=>u.eligible());
+    for(let i=pool.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; const t=pool[i]; pool[i]=pool[j]; pool[j]=t; }
+    return { choices: pool.slice(0,3), cursor:0, confirmed:false };
+  });
+  player = prev;
+  if(multiPicks.every(mp=>mp.choices.length===0)){ multiPicks=null; return; } // nothing to offer
+  multiUpgradeActive = true;
+  for(const k in pressedEdge) pressedEdge[k]=false;
+  renderMultiCards();
+  document.getElementById('multiUpgradeOverlay').classList.remove('hidden');
+}
+
+function renderMultiCards(){
+  const prev = player;
+  for(let i=0;i<2;i++){
+    const mp = multiPicks[i];
+    player = players[i];
+    const el = document.getElementById('multiCardsP'+(i+1));
+    document.getElementById('multiUpColP'+(i+1)).style.setProperty('--pc', players[i].color);
+    el.innerHTML = mp.choices.map((u,ci)=>
+      '<div class="multi-up-card'+(ci===mp.cursor?' sel':'')+(mp.confirmed?' locked':'')+'">'+
+        '<div class="muc-name">'+u.name+'</div>'+
+        '<div class="muc-desc">'+resolveDesc(u)+'</div>'+
+      '</div>'
+    ).join('') + (mp.confirmed ? '<div class="muc-ready">LOCKED IN</div>' : '<div class="muc-hint">move to choose · jump to lock</div>');
+  }
+  player = prev;
+}
+
+function updateMultiUpgrade(){
+  let changed = false;
+  for(let i=0;i<2;i++){
+    const mp = multiPicks[i];
+    if(mp.confirmed || mp.choices.length===0) continue;
+    const kb = players[i].kb;
+    const edge = arr => (arr||[]).some(k=>pressedEdge[k]);
+    if(edge(kb.moveLeft)){ mp.cursor = (mp.cursor+mp.choices.length-1)%mp.choices.length; changed=true; }
+    if(edge(kb.moveRight)){ mp.cursor = (mp.cursor+1)%mp.choices.length; changed=true; }
+    if(edge(kb.jump)){
+      const prev = player; player = players[i];
+      mp.choices[mp.cursor].apply();
+      player = prev;
+      mp.confirmed = true; changed = true;
+    }
+  }
+  for(const k in pressedEdge) pressedEdge[k]=false; // consume this frame's presses
+  if(changed) renderMultiCards();
+  // a player with no offered cards auto-confirms so the other can still finish
+  if(multiPicks.every(mp=>mp.confirmed || mp.choices.length===0)) closeMultiUpgrade();
+}
+
+function closeMultiUpgrade(){
+  multiUpgradeActive = false;
+  multiPicks = null;
+  document.getElementById('multiUpgradeOverlay').classList.add('hidden');
+  for(const k in pressedEdge) pressedEdge[k]=false;
 }
 
 // ================= FIRST-RUN TUTORIAL =================
@@ -2511,7 +2609,8 @@ function buildUpgradePool(){
       apply:()=>{ player.up.slim++; updatePlayerRadius(); } },
     // ---- endless-only replacements for the projectile-destroying upgrades above ----
     { id:'shieldCharge', name:'Second Chance', levelsEligible:false,
-      desc:'Blocks the next hit that would end your run, at the cost of 35% of your current score. Stacks up to 2 charges.',
+      desc:()=> multi() ? 'Blocks the next hit that would take you out. Stacks up to 2 charges.'
+                        : 'Blocks the next hit that would end your run, at the cost of 35% of your current score. Stacks up to 2 charges.',
       eligible:()=> (player.up.shieldCharge||0) < 2,
       apply:()=>{ player.up.shieldCharge = (player.up.shieldCharge||0)+1; } },
     { id:'scoreMult', name:'Adrenaline Rush', levelsEligible:false,
@@ -2525,8 +2624,32 @@ function buildUpgradePool(){
     { id:'slowEfficiency', name:'Conservation', levelsEligible:false,
       desc:'-15% Slow-Mo drain rate. No stack limit.',
       eligible:()=> true,
-      apply:()=>{ player.up.slowEfficiency = (player.up.slowEfficiency||0)+1; } }
+      apply:()=>{ player.up.slowEfficiency = (player.up.slowEfficiency||0)+1; } },
+    // ---- newer, broadly-useful upgrades (Afterburner works everywhere; the respawn pair only
+    // matters in modes where you actually respawn, so they're pool-gated to those) ----
+    { id:'dashPower', name:'Afterburner',
+      desc:'+30% dash distance. No stack limit.',
+      eligible:()=> true,
+      apply:()=>{ player.up.dashPower = (player.up.dashPower||0)+1; } },
+    { id:'respawnFast', name:'Rebound',
+      desc:()=> '-'+Math.round(Math.min(((player.up.respawnFast||0)+1)*0.2,0.6)*100)+'% respawn delay after going down.',
+      eligible:()=> (player.up.respawnFast||0) < 3,
+      apply:()=>{ player.up.respawnFast = (player.up.respawnFast||0)+1; } },
+    { id:'respawnGuard', name:'Guardian',
+      desc:()=> '+'+((player.up.respawnGuard||0)*0.7+0.7).toFixed(1)+'s invulnerability when you respawn. No stack limit.',
+      eligible:()=> true,
+      apply:()=>{ player.up.respawnGuard = (player.up.respawnGuard||0)+1; } }
   ];
+  if(multi()){
+    // in a 2-player match, offer only upgrades that actually do something with the baseline
+    // kit in this specific mode — no ability unlocks (no Q/F/R keys or HUD for a 2nd player)
+    const respawnMode = (pvpMode==='race') || coop;   // modes where you come back after dying
+    const coreMode = (pvpMode==='race') || (coopMode==='takedown'); // modes with a core to sever
+    const ok = new Set(['extraJump','legs','reflex','slim','shieldCharge','slowMaxBoost','slowEfficiency','dashPower']);
+    if(respawnMode){ ok.add('respawnFast'); ok.add('respawnGuard'); }
+    if(coreMode){ ok.add('slowPull'); }
+    return pool.filter(u=>ok.has(u.id));
+  }
   return pool.filter(u => gameMode==='endless' ? u.endlessEligible!==false : u.levelsEligible!==false);
 }
 
@@ -3086,7 +3209,7 @@ function onAbility3Pressed(mx, my){ // Dash — forbidden mid-hop, so jump+dash 
   if(Math.hypot(mx,my)===0){ dx=Math.cos(player.facing); dy=Math.sin(player.facing); }
   const dl = Math.hypot(dx,dy)||1;
   player.dashVX = dx/dl; player.dashVY = dy/dl;
-  player.dashT = ABILITY.DASH_DUR;
+  player.dashT = dashDurMax();
   player.dashCd = dashCdMax();
   spawnBurstParticles(player.x,player.y,'#ffab4a',16);
 }
@@ -3493,14 +3616,24 @@ function checkCollisionsMulti(pl){
 }
 
 function killMultiPlayer(pl){
+  // Second Chance absorbs the fatal hit instead of taking you out, with a brief i-frame window
+  if((pl.up.shieldCharge||0) > 0){
+    pl.up.shieldCharge--;
+    pl.invincT = Math.max(pl.invincT, 1.2);
+    flashHit(0.5, '#5be3ff');
+    spawnBurstParticles(pl.x, pl.y, '#5be3ff', 20);
+    return;
+  }
   pl.alive = false;
   spawnBurstParticles(pl.x, pl.y, pl.color, 26);
   shakeT = Math.max(shakeT, 0.25); shakeMag = Math.max(shakeMag, 12); shakeMax = Math.max(shakeMax, shakeT);
   flashHit(0.35, pl.color);
   playDeathSfx();
   if(coop || pvpMode==='race'){
-    // co-op (both modes) and PvP race all cost a respawn delay; PvP survival is one-and-done
-    pl.respawnT = coop ? COOP_RESPAWN_DELAY : PVP_RESPAWN_DELAY;
+    // co-op (both modes) and PvP race all cost a respawn delay; PvP survival is one-and-done.
+    // Rebound (respawnFast) shortens the delay, down to a floor.
+    const base = coop ? COOP_RESPAWN_DELAY : PVP_RESPAWN_DELAY;
+    pl.respawnT = base * (1 - Math.min((pl.up.respawnFast||0)*0.2, 0.6));
   }
 }
 
@@ -3508,7 +3641,8 @@ function respawnPvpPlayer(pl){
   resetPlayerObj(pl, pl.spawnAngle, true);
   pl.alive = true;
   pl.respawnT = 0;
-  pl.invincT = 1.4; // brief grace so you're not instantly re-killed on the same volley
+  // brief grace so you're not instantly re-killed on the same volley — Guardian extends it
+  pl.invincT = 1.4 + (pl.up.respawnGuard||0)*0.7;
 }
 
 // decides a multiplayer match each frame.
@@ -4322,7 +4456,9 @@ function frame(now){
     }
   }
 
-  if(state==='playing' && !paused && !tutorialFrozen){
+  if(state==='playing' && multiUpgradeActive){
+    updateMultiUpgrade(); // shared upgrade pick open — sim frozen until both players lock in
+  } else if(state==='playing' && !paused && !tutorialFrozen){
     elapsed += dt;
     // levels mode used to auto-win after a fixed 60s survival timer; now destroying the
     // core is the only way to win, so play just continues indefinitely until then
@@ -4345,15 +4481,16 @@ function frame(now){
       const scoreMult = 1 + (player.up.scoreMult||0)*0.2;
       score += (ENDLESS_SCORE_RATE + diffLevel()*20) * dt * scoreMult;
     }
-    // upgrade picks recur on the same timer in both modes — unlimited, not a fixed count
+    // upgrade picks recur on a timer — unlimited, not a fixed count
     if(elapsed >= nextUpgradeAt){
-      nextUpgradeAt += UPGRADE_INTERVAL;
-      // in test mode, upgrades are always available in the side panel instead —
-      // don't interrupt play to offer a 3-card pick
-      if(testMode) upgradeIndex++;
+      nextUpgradeAt += multi() ? MULTI_UPGRADE_INTERVAL : UPGRADE_INTERVAL;
+      // multiplayer: both players pick at once (freezes the sim). Test mode: upgrades live in
+      // the side panel instead, so don't interrupt play.
+      if(multi()) enterMultiUpgrade();
+      else if(testMode) upgradeIndex++;
       else enterLevelUp();
     }
-    if(state==='playing' && multi()){
+    if(state==='playing' && multi() && !multiUpgradeActive){
       // move/act each living player (swapping the current-player pointer + control set), then
       // update the shared projectile field once, then resolve severs/hits per player
       const severMode = (pvpMode==='race') || (coopMode==='takedown'); // modes with a core to chip
