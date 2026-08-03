@@ -484,6 +484,10 @@
         <div class="mode-card-title" style="color:var(--magenta); text-shadow:0 0 14px rgba(255,91,216,.5);">PvP · Local 2-Player</div>
         <div class="mode-card-desc">Two players, one keyboard. Survival — last one standing wins. Race — split the core and be first to destroy your half.</div>
       </div>
+      <div class="mode-card pvp" id="coopBtn" style="width:100%; max-width:702px;">
+        <div class="mode-card-title" style="color:#6bffb0; text-shadow:0 0 14px rgba(107,255,176,.5);">Co-op · Local 2-Player</div>
+        <div class="mode-card-desc">Two players, one keyboard, same team. Survival — endure together. Takedown — jointly destroy one shared core. Fall together and it's over.</div>
+      </div>
     </div>
     <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:22px;">
       <button class="cta ghost" id="howToPlayBtn">HOW TO PLAY</button>
@@ -519,6 +523,34 @@
       </div>
     </div>
     <div style="margin-top:16px;"><button class="cta ghost" id="pvpBackBtn" style="min-width:160px;">BACK</button></div>
+  </div>
+</div>
+
+<div class="overlay hidden" id="coopOverlay">
+  <div class="panel wide">
+    <div class="title" style="font-size:38px;">Co-op · Local 2-Player</div>
+    <div class="subtitle" style="margin-bottom:10px;">Two players, one keyboard, same team. Pick a mode.</div>
+    <div class="pvp-controls">
+      <div class="pvp-ctrl-col p1">
+        <div class="who">PLAYER 1</div>
+        Move <b>W A S D</b><br>Jump <b>Space</b><br>Dash <b>Left Shift</b><br>Slow-Mo <b>E</b>
+      </div>
+      <div class="pvp-ctrl-col p2">
+        <div class="who">PLAYER 2</div>
+        Move <b>Arrow Keys</b><br>Jump <b>/</b><br>Dash <b>.</b><br>Slow-Mo <b>,</b>
+      </div>
+    </div>
+    <div class="pvp-opt-cards">
+      <div class="pvp-opt" id="coopSurvivalBtn">
+        <div class="pvp-opt-title" style="color:#6bffb0; text-shadow:0 0 14px rgba(107,255,176,.5);">Survival</div>
+        <div class="pvp-opt-desc">No core — just survive the barrage together, as long as you can. Die and you respawn after a few seconds, but if your partner falls while you're still down, you both lose.</div>
+      </div>
+      <div class="pvp-opt" id="coopTakedownBtn">
+        <div class="pvp-opt-title" style="color:#6bffb0; text-shadow:0 0 14px rgba(107,255,176,.5);">Takedown</div>
+        <div class="pvp-opt-desc">One shared, reinforced core. Sever shots together to tear it down. Same respawn rule — fall at the same time and the core wins.</div>
+      </div>
+    </div>
+    <div style="margin-top:16px;"><button class="cta ghost" id="coopBackBtn" style="min-width:160px;">BACK</button></div>
   </div>
 </div>
 
@@ -770,7 +802,7 @@ window.addEventListener('keydown', (e)=>{
     return;
   }
   if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
-  if(pvp && PVP_KEYS.has(k)) e.preventDefault(); // stop '/' quick-find etc. hijacking P2's keys
+  if(multi() && PVP_KEYS.has(k)) e.preventDefault(); // stop '/' quick-find etc. hijacking P2's keys
   // ignore OS key-repeat: a key held from before a state change must not re-trigger
   // an upgrade pick just because the same physical key is still being held down
   if(e.repeat) return;
@@ -783,7 +815,7 @@ window.addEventListener('keydown', (e)=>{
     if(k==='z') choosePendingUpgrade(0);
     else if(k==='x') choosePendingUpgrade(1);
     else if(k==='c') choosePendingUpgrade(2);
-  } else if(state==='gameover' && !inTutorialLevel && !pvp){ // PvP result has its own buttons
+  } else if(state==='gameover' && !inTutorialLevel && !multi()){ // multiplayer result has its own buttons
     if(k==='l'){ if(gameMode==='endless') showMenu(); else showLevelSelect(); }
     else if(k==='r' && (!levelWon || canRetryWin)){ if(gameMode==='endless') startEndless(); else startLevel(currentLevel); }
     else if(k===' ' || k==='enter'){
@@ -910,6 +942,7 @@ let testDeathCount = 0; // test mode only: how many times a shot has passed thro
 let dashTrailPoints = []; // Scorch Trail upgrade: short-lived damage zones left behind while dashing
 
 const CORE_MAX_HP = 100; // chipped by severing, Scorch Trail kills, and Nova kills — hits 0 and the core dies, winning the level early
+let coreMaxHP = CORE_MAX_HP; // usually CORE_MAX_HP; co-op takedown raises it for a longer shared fight
 let coreHP = CORE_MAX_HP;
 let corePhase = 1; // bumped to 2 at the level's authored mid-point, purely a visual/behavioral tell
 const CORE_EXPLODE_DUR = 1.5; // seconds the core-exploding cutscene plays before winLevel() fires
@@ -957,6 +990,12 @@ const PVP_RESPAWN_DELAY = 4;  // seconds a race death costs you before you're ba
 const PVP_HALF_HP = 100;      // each player's half of the core in race mode
 const PVP_RACE_LEVEL = 6;     // fixed difficulty for race (no ramp — a pure sever race)
 const PVP_P1_COLOR = '#5be3ff', PVP_P2_COLOR = '#ff5bd8';
+// co-op: teammates share one core. You respawn after a delay — but if your partner falls
+// while you're still down, you're both out at once and the run ends.
+const COOP_RESPAWN_DELAY = 4;
+const COOP_TAKEDOWN_LEVEL = 9; // fixed difficulty for the shared-core takedown fight
+const COOP_CORE_HP = 220;      // beefier than a solo core — it's two players chipping it
+const COOP_P1_COLOR = '#5be3ff', COOP_P2_COLOR = '#6bffb0'; // cyan + green: same team, still distinct
 
 const ABILITY = {
   JUMP_DUR:0.7, JUMP_CD:1.15,
@@ -1060,7 +1099,7 @@ function resetRunState(){
   nextSpawnAt = 1.0;
   shakeT = 0; shakeMag = 0; shakeMax = 0;
   hitStopT = 0; pendingFail = false;
-  coreHP = CORE_MAX_HP; corePhase = 1; pendingSpawn = null;
+  coreMaxHP = CORE_MAX_HP; coreHP = CORE_MAX_HP; corePhase = 1; pendingSpawn = null;
   explodingT = 0; explodeClimaxFired = false;
   openerFired = false; phaseChangeFired = false;
   severCount = 0;
@@ -1105,11 +1144,12 @@ function showMenu(){
   state = 'menu';
   setPaused(false);
   inTutorialLevel = false; // safety net — any path back to the menu should never leave this stuck on
-  if(pvp) exitPvp();
+  if(multi()) exitPvp();
   document.getElementById('goOverlay').classList.add('hidden');
   document.getElementById('levelOverlay').classList.add('hidden');
   document.getElementById('levelSelectOverlay').classList.add('hidden');
   document.getElementById('pvpOverlay').classList.add('hidden');
+  document.getElementById('coopOverlay').classList.add('hidden');
   document.getElementById('menuOverlay').classList.remove('hidden');
 }
 
@@ -1124,6 +1164,13 @@ function showLevelSelect(){
 }
 
 // ================= PvP =================
+// remembers the last 2-player match so the result screen's REMATCH can restart the same one
+let lastMatch = { family:'pvp', mode:'survival' };
+function startMatch(family, mode){
+  lastMatch = { family, mode };
+  if(family==='coop') startCoop(mode); else startPvp(mode);
+}
+
 function showPvpMenu(){
   state = 'menu';
   setPaused(false);
@@ -1173,14 +1220,22 @@ function updatePvpHud(){
     const p = players[i], n = i+1;
     document.getElementById('pvpName'+'P'+n).textContent = 'PLAYER '+n;
     const statEl = document.getElementById('pvpStat'+'P'+n);
-    if(pvpMode==='survival'){
+    const down = !p.alive && p.respawnT>0;
+    if(down){
+      statEl.textContent = 'DOWN · '+p.respawnT.toFixed(1)+'s';
+      statEl.classList.add('out');
+    } else if(pvp && pvpMode==='race'){
+      statEl.textContent = Math.round(Math.max(0,p.halfHP)/PVP_HALF_HP*100)+'% left';
+      statEl.classList.remove('out');
+    } else if(pvp && pvpMode==='survival'){
       const t = p.survivalTime.toFixed(1);
       statEl.textContent = p.alive ? (t+'s') : ('OUT · '+t+'s');
       statEl.classList.toggle('out', !p.alive);
-    } else { // race
-      const pct = Math.round(Math.max(0,p.halfHP)/PVP_HALF_HP*100);
-      if(!p.alive && p.respawnT>0){ statEl.textContent = 'DOWN · '+p.respawnT.toFixed(1)+'s'; statEl.classList.add('out'); }
-      else { statEl.textContent = pct+'% left'; statEl.classList.remove('out'); }
+    } else if(coop){
+      // co-op: survival shows shared time; takedown shows the shared core's remaining HP
+      if(coopMode==='survival') statEl.textContent = players[0].survivalTime.toFixed(1)+'s';
+      else statEl.textContent = Math.round(Math.max(0,coreHP)/coreMaxHP*100)+'% core';
+      statEl.classList.remove('out');
     }
     // slow-mo energy bar
     const prev = player; player = p;
@@ -1216,7 +1271,7 @@ function showPvpResult(winner){
 }
 
 function exitPvp(){
-  pvp = false; pvpMode = null; players = null; pvpOver = false;
+  pvp = false; pvpMode = null; coop = false; coopMode = null; players = null; pvpOver = false;
   activeKeybinds = keybinds;
   player = makePlayerObjectSafe();
   document.getElementById('pvpHud').classList.add('hidden');
@@ -1225,6 +1280,69 @@ function exitPvp(){
 // after a match, restore a clean single-player `player` so the rest of the game (HUD reads,
 // menu) has a valid object to point at
 function makePlayerObjectSafe(){ const p = makePlayerObject(); return p; }
+
+// ================= CO-OP =================
+function showCoopMenu(){
+  state = 'menu';
+  setPaused(false);
+  hideAllOverlays();
+  document.getElementById('menuOverlay').classList.add('hidden');
+  document.getElementById('coopOverlay').classList.remove('hidden');
+}
+
+// starts a local 2-player co-op match. Survival = endure the coreless barrage together;
+// Takedown = jointly sever the one shared (beefed-up) core. Both modes share respawn logic:
+// you come back after a delay, but if your partner falls while you're down, you both lose.
+function startCoop(mode){
+  coop = true; coopMode = mode; pvp = false; pvpMode = null; pvpOver = false;
+  gameMode = (mode==='takedown') ? 'levels' : 'endless';
+  currentLevel = COOP_TAKEDOWN_LEVEL;
+  state = 'playing';
+  setPaused(false);
+  testMode = false;
+  tutorialActive = false; inTutorialLevel = false;
+
+  resetRunState();
+  nextUpgradeAt = Infinity;
+  if(mode==='takedown'){ coreMaxHP = COOP_CORE_HP; coreHP = COOP_CORE_HP; }
+
+  const p1 = makePlayerObject();
+  p1.color = COOP_P1_COLOR; p1.kb = PVP_KB_P1; p1.spawnAngle = Math.PI*0.78;
+  const p2 = makePlayerObject();
+  p2.color = COOP_P2_COLOR; p2.kb = PVP_KB_P2; p2.spawnAngle = Math.PI*0.22;
+  for(const p of [p1,p2]){
+    resetPlayerObj(p, p.spawnAngle, true);
+    p.alive = true; p.respawnT = 0; p.survivalTime = 0; p.invincT = 1.0;
+  }
+  players = [p1, p2];
+  player = p1; activeKeybinds = keybinds;
+
+  document.documentElement.style.setProperty('--p1', COOP_P1_COLOR);
+  document.documentElement.style.setProperty('--p2', COOP_P2_COLOR);
+  document.getElementById('pvpHud').classList.remove('hidden');
+  hideAllOverlays();
+  document.getElementById('coopOverlay').classList.add('hidden');
+}
+
+function showCoopResult(won){
+  document.getElementById('pvpHud').classList.add('hidden');
+  const sub = document.getElementById('pvpResultSub');
+  const winTxt = document.getElementById('pvpWinnerText');
+  const stat = document.getElementById('pvpResultStat');
+  sub.textContent = 'Co-op · ' + (coopMode==='takedown' ? 'Takedown' : 'Survival');
+  if(won){
+    winTxt.textContent = 'CORE DESTROYED';
+    winTxt.style.color = 'var(--cyan)';
+    stat.innerHTML = 'Taken down together in <b>'+elapsed.toFixed(1)+'s</b>';
+  } else {
+    winTxt.textContent = 'OVERWHELMED';
+    winTxt.style.color = 'var(--orange)';
+    stat.innerHTML = coopMode==='survival'
+      ? 'Survived <b>'+players[0].survivalTime.toFixed(1)+'s</b> together'
+      : 'The core held with <b>'+Math.round(Math.max(0,coreHP)/coreMaxHP*100)+'%</b> left';
+  }
+  document.getElementById('pvpResultOverlay').classList.remove('hidden');
+}
 
 // ================= FIRST-RUN TUTORIAL =================
 // An interactive, hands-on walkthrough shown the very first time the game loads (in place of
@@ -1539,12 +1657,19 @@ document.getElementById('pvpBackBtn').addEventListener('click', ()=>{
   document.getElementById('pvpOverlay').classList.add('hidden');
   showMenu();
 });
-document.getElementById('pvpSurvivalBtn').addEventListener('click', ()=> startPvp('survival'));
-document.getElementById('pvpRaceBtn').addEventListener('click', ()=> startPvp('race'));
+document.getElementById('pvpSurvivalBtn').addEventListener('click', ()=> startMatch('pvp','survival'));
+document.getElementById('pvpRaceBtn').addEventListener('click', ()=> startMatch('pvp','race'));
+document.getElementById('coopBtn').addEventListener('click', showCoopMenu);
+document.getElementById('coopBackBtn').addEventListener('click', ()=>{
+  document.getElementById('coopOverlay').classList.add('hidden');
+  showMenu();
+});
+document.getElementById('coopSurvivalBtn').addEventListener('click', ()=> startMatch('coop','survival'));
+document.getElementById('coopTakedownBtn').addEventListener('click', ()=> startMatch('coop','takedown'));
 document.getElementById('pvpRematchBtn').addEventListener('click', ()=>{
-  const mode = pvpMode;
+  const m = lastMatch;
   exitPvp();
-  startPvp(mode);
+  startMatch(m.family, m.mode);
 });
 document.getElementById('pvpMenuBtn').addEventListener('click', ()=>{ exitPvp(); showMenu(); });
 document.getElementById('retryBtn').addEventListener('click', ()=>{ if(gameMode==='endless') startEndless(); else startLevel(currentLevel); });
@@ -3272,7 +3397,7 @@ function checkCollisions(){
   // the tutorial is forgiving — a mistimed dodge shouldn't end the lesson, so shots pass
   // harmlessly through the player. Severing still works (that's checkSevers, separate).
   if(tutorialActive) return;
-  if(pvp){ checkCollisionsPvp(player); return; } // per-player hit -> that player dies, not the match
+  if(multi()){ checkCollisionsMulti(player); return; } // per-player hit -> that player dies, not the match
   const invuln = player.dashT>0 || player.invincT>0;
   // test mode is a pure sandbox for testing severing/deflection/core damage — shots just
   // pass through the player with no effect at all, not even a no-sell flash. still worth
@@ -3346,15 +3471,15 @@ function consumeShieldOrFail(){
   failLevel();
 }
 
-// ---- PvP per-player collision / death / respawn / win ----
+// ---- multiplayer per-player collision / death / respawn / win ----
 // same hit test as single-player, but a hit kills only the current player `pl`
-function checkCollisionsPvp(pl){
+function checkCollisionsMulti(pl){
   if(!pl.alive || pl.invincT>0 || pl.dashT>0) return;
   for(const p of projectiles){
     if(p.spawnGrace>0 || p.dead) continue;
     if(dist(pl.x,pl.y,p.x,p.y) < pl.r+p.r){
       if(p.tag==='ground' && pl.jumpT>0) continue; // jumped over a ground shot
-      killPvpPlayer(pl);
+      killMultiPlayer(pl);
       return;
     }
   }
@@ -3363,21 +3488,20 @@ function checkCollisionsPvp(pl){
     const pd = dist(CX,CY,pl.x,pl.y);
     if(pd > R*0.98) continue;
     const pa = Math.atan2(pl.y-CY, pl.x-CX);
-    if(Math.abs(angNorm(pa-t.angle)) < t.halfWidth){ killPvpPlayer(pl); return; }
+    if(Math.abs(angNorm(pa-t.angle)) < t.halfWidth){ killMultiPlayer(pl); return; }
   }
 }
 
-function killPvpPlayer(pl){
+function killMultiPlayer(pl){
   pl.alive = false;
   spawnBurstParticles(pl.x, pl.y, pl.color, 26);
   shakeT = Math.max(shakeT, 0.25); shakeMag = Math.max(shakeMag, 12); shakeMax = Math.max(shakeMax, shakeT);
   flashHit(0.35, pl.color);
   playDeathSfx();
-  if(pvpMode==='race'){
-    // dying costs you a long respawn delay — the whole point of the race penalty
-    pl.respawnT = PVP_RESPAWN_DELAY;
+  if(coop || pvpMode==='race'){
+    // co-op (both modes) and PvP race all cost a respawn delay; PvP survival is one-and-done
+    pl.respawnT = coop ? COOP_RESPAWN_DELAY : PVP_RESPAWN_DELAY;
   }
-  // survival: no respawn — you're simply out; survivalTime is frozen at this point
 }
 
 function respawnPvpPlayer(pl){
@@ -3387,11 +3511,16 @@ function respawnPvpPlayer(pl){
   pl.invincT = 1.4; // brief grace so you're not instantly re-killed on the same volley
 }
 
-// decides a PvP match. Survival: the moment one player dies the other has outlasted them and
-// wins (equal-frame double-KO compares survival time, tie = draw). Race: first to zero their
-// half of the core wins.
+// decides a multiplayer match each frame.
 function checkPvpWin(){
   if(pvpOver) return;
+  if(coop){
+    // teammates lose the moment both are down at once (a partner falling while you're still
+    // waiting to respawn). Takedown is also winnable — the shared core reaching 0 ends it in
+    // victory (handled in damageCore -> endCoopMatch).
+    if(players.every(p=>!p.alive)) endCoopMatch(false);
+    return;
+  }
   if(pvpMode==='survival'){
     if(players.some(p=>!p.alive)) endPvpMatch();
   } else { // race
@@ -3413,6 +3542,15 @@ function endPvpMatch(raceWinner){
                : (players[0].survivalTime>players[1].survivalTime ? players[0] : players[1]);
   }
   showPvpResult(winner);
+}
+
+// co-op ending: `won` true = the shared core was destroyed (takedown victory); false = both
+// players went down at once (overwhelmed). Survival has no win — it only ever ends in a loss.
+function endCoopMatch(won){
+  if(pvpOver) return;
+  pvpOver = true;
+  state = 'gameover';
+  showCoopResult(won);
 }
 
 // cutting through a shot's tail destroys it and chips the core — levels-mode only:
@@ -3443,7 +3581,8 @@ function registerSever(p){
   severCount++;
   p.dead = true; // cutting through a shot's tail destroys it — this is baseline now, not an upgrade perk
   spawnBurstParticles(p.x,p.y,'#bdfff0',6);
-  // in a PvP race each sever chips the severing player's own half of the core, not a shared one
+  // PvP race: each sever chips the severing player's own half. Co-op takedown: both players
+  // chip the single shared core together (falls through to damageCore below).
   if(pvp){
     if(pvpMode==='race') player.halfHP = Math.max(0, player.halfHP - ABILITY.SEVER_CORE_DMG);
     return;
@@ -3464,6 +3603,8 @@ function damageCore(amount){
   // taking damage, it just never actually reaches 0
   coreHP = Math.max(inTutorialLevel ? 1 : 0, coreHP-amount);
   if(coreHP<=0 && state==='playing'){
+    // co-op takedown: destroying the shared core is a team victory, not a solo level clear
+    if(coop){ endCoopMatch(true); return; }
     levelWinElapsed = elapsed; // snapshot now — winLevel() fires only after the explosion cutscene
     startWinSequence();
   }
@@ -3624,11 +3765,11 @@ function drawCore(){
 // only shown once the core has actually taken damage, so a passive/non-severing player
 // isn't shown a bar that never moves
 function drawCoreHP(){
-  if(coreHP>=CORE_MAX_HP) return;
+  if(coreHP>=coreMaxHP) return;
   ctx.save();
   ctx.translate(CX,CY);
   const r = CORE_NO_GO_R()+8;
-  const frac = Math.max(0, coreHP/CORE_MAX_HP);
+  const frac = Math.max(0, coreHP/coreMaxHP);
   ctx.strokeStyle = 'rgba(255,255,255,.15)';
   ctx.lineWidth = 3;
   ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.stroke();
@@ -3948,7 +4089,7 @@ function render(){
   drawDecoy();
   drawParticles();
   drawProjectiles();
-  if(pvp){
+  if(multi()){
     const prev = player;
     for(const p of players){ if(p.alive){ player = p; drawPlayer(); } }
     player = prev;
@@ -4063,8 +4204,8 @@ function hudClass(key, el, cls, on){
 }
 
 function updateHud(){
-  if(pvp){
-    // PvP has its own two-player HUD; hide all the single-player readouts
+  if(multi()){
+    // multiplayer has its own two-player HUD; hide all the single-player readouts
     hudStyle('hudBottomDisp', hudBottom, 'display', 'none');
     hudStyle('upgradePanelDisp', upgradePanel, 'display', 'none');
     hudStyle('scoreBlockDisp', scoreLabel.parentElement, 'display', 'none');
@@ -4212,9 +4353,11 @@ function frame(now){
       if(testMode) upgradeIndex++;
       else enterLevelUp();
     }
-    if(state==='playing' && pvp){
+    if(state==='playing' && multi()){
       // move/act each living player (swapping the current-player pointer + control set), then
       // update the shared projectile field once, then resolve severs/hits per player
+      const severMode = (pvpMode==='race') || (coopMode==='takedown'); // modes with a core to chip
+      const timeMode = (pvpMode==='survival') || (coopMode==='survival'); // modes scored by survival time
       for(const p of players){
         if(p.alive){ player = p; activeKeybinds = p.kb; updatePlayer(dt); }
         else if(p.respawnT>0){ p.respawnT -= dt; if(p.respawnT<=0) respawnPvpPlayer(p); }
@@ -4229,9 +4372,9 @@ function frame(now){
       for(const p of players){
         if(!p.alive) continue;
         player = p; activeKeybinds = p.kb;
-        if(pvpMode==='race') checkSevers();
+        if(severMode) checkSevers();
         checkCollisions();
-        if(pvpMode==='survival') p.survivalTime += dt;
+        if(timeMode) p.survivalTime += dt;
       }
       player = players[0]; activeKeybinds = keybinds;
       checkPvpWin();
