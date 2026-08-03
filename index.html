@@ -1277,6 +1277,7 @@ function winLevel(){
 function failLevel(){
   // test mode never reaches this — checkCollisions() passes shots straight through instead
   if(pendingFail) return; // already freezing on this exact hit; ignore re-entrant collisions during hit-stop
+  playDeathSfx(); // the one surviving sound effect — every real death cues it
   shakeT = 0.35; shakeMag = 18; shakeMax = shakeT;
   hitStopT = HITSTOP_DEATH;
   pendingFail = true;
@@ -1353,231 +1354,711 @@ function chromaBurst(){
 }
 
 // ================= MUSIC =================
-// procedural, generated entirely with the Web Audio API — no external audio assets, matching
-// the single-file/zero-dependency rule everything else in this project follows. an ambient
-// drone plays continuously, plus a low "thump" timed to land exactly on the same sine wave
-// that drives the core's visual pulse (see drawCore()'s `pulse` calc), so the beat and the
-// core's breathing are always in lockstep rather than two clocks drifting apart over time.
+// Procedural soundtrack, generated entirely with the Web Audio API — no external audio
+// assets, matching the single-file / zero-dependency rule the rest of the project follows.
+// The whole thing is built on one coincidence: the core's visual breathing is
+// `1 + sin(elapsed*3.2)*0.06`, one pulse every 2*PI/3.2 = 1.9635 s. Treat that pulse as one
+// 4/4 BAR and the tempo lands on 122.231 BPM, exactly 4x the pulse rate — so the beat and the
+// core's breathing stay in lockstep by construction. Each level has its own 16-bar loop;
+// Endless gets one long-form 96-bar piece. Notes are scheduled on the Web Audio clock with a
+// short lookahead fed from game time, so pause and hit-stop stall the music with the core.
 const MUSIC_MUTED_KEY = 'pulseArenaMusicMuted';
+
+const CORE_OMEGA    = 3.2;                        // must match drawCore()'s pulse rate
+const BAR_DUR       = 2*Math.PI/CORE_OMEGA;       // 1.963495 s — one core pulse
+const STEPS_PER_BAR = 16;                         // sixteenth notes
+const STEP_DUR      = BAR_DUR/STEPS_PER_BAR;      // 0.122718 s
+const MUSIC_T0      = Math.PI/(2*CORE_OMEGA);     // 0.490874 s — the core's first peak
+const LOOKAHEAD     = 0.14;                       // seconds of game time scheduled in advance
+const MUSIC_VOL     = 1.15;                       // master, pre-limiter
+
+// the game drives the music through this host: which track, how far in, how hot, and whether
+// a run is actually happening (silent at the menu / result screens)
+const MUSIC_HOST = {
+  active(){ return state==='playing' || state==='exploding' || state==='levelup'; },
+  time(){ return elapsed; },
+  trackId(){ return gameMode==='endless' ? 'endless' : currentLevel; },
+  intensity(){ return corePhase>=2 ? 1 : 0; }
+};
+
 let audioCtx = null;
-let musicGain = null;      // mute on/off (user toggle)
-let musicActiveGain = null; // in-a-level on/off (menu/results silence, gameplay plays)
-let sfxGain = null;
+let musicGain = null;       // mute on/off (user toggle)
+let musicActiveGain = null; // in-a-run on/off (menu/results silence, gameplay plays)
+let sfxGain = null;         // the death cue routes here; everything else is music
+let drumBus = null;         // drums bypass the sidechain duck
+let pumpBus = null;         // bass/arp/lead/pad — ducked on every kick
+let padGain = null, padVoices = null;
+let delayNode = null, delayFb = null, delayWet = null;
 let musicMuted = localStorage.getItem(MUSIC_MUTED_KEY) === '1';
-let dronePad = null;
-let lastPulseCos = 0;
-let pulseCount = 0;
-let chordIndex = 0;
-// a slow 4-chord progression (Am - F - C - G) the pad and arpeggio both follow, so there's
-// real harmonic movement instead of one static drone forever
-const CHORDS = [
-  [220.00, 261.63, 329.63], // Am: A3 C4 E4
-  [174.61, 220.00, 261.63], // F:  F3 A3 C4
-  [130.81, 164.81, 196.00], // C:  C3 E3 G3
-  [196.00, 246.94, 293.66]  // G:  G3 B3 D4
-];
-const CHORD_LEN_PULSES = 4; // one chord lasts this many core-pulse cycles
 
-function ensureAudio(){
-  if(audioCtx) return;
-  const Ctx = window.AudioContext || window.webkitAudioContext;
-  if(!Ctx) return; // unsupported browser — music is a nice-to-have, never block play over it
-  audioCtx = new Ctx();
-  musicGain = audioCtx.createGain();
-  musicGain.gain.value = musicMuted ? 0 : 2.1;
-  musicActiveGain = audioCtx.createGain();
-  musicActiveGain.gain.value = 0; // starts silent — updateMusic() fades it in once a level actually starts
-  sfxGain = audioCtx.createGain();
-  sfxGain.gain.value = 1;
-  // gain this high would otherwise hard-clip into harsh digital distortion — a limiter
-  // right before the destination keeps it loud without the crackle. sfx share it too, so a
-  // burst of hits/severs never spikes into distortion alongside the music.
-  const limiter = audioCtx.createDynamicsCompressor();
-  limiter.threshold.value = -8; limiter.knee.value = 6; limiter.ratio.value = 14;
-  limiter.attack.value = 0.003; limiter.release.value = 0.1;
-  musicGain.connect(musicActiveGain); musicActiveGain.connect(limiter);
-  sfxGain.connect(limiter);
-  limiter.connect(audioCtx.destination);
-  startDrone();
-}
-// browsers block audio until a real user gesture — the very first click or keypress
-// anywhere starts it, whatever that click/keypress happened to be for
-window.addEventListener('pointerdown', ensureAudio, { once:true });
-window.addEventListener('keydown', ensureAudio, { once:true });
+// scheduler state
+let musicAnchor = 0;      // audioCtx time that corresponds to game time 0
+let nextStep = 0;         // next absolute sixteenth-step index to schedule
+let curTrackId = null;
+let lastGameTime = -1;
+let lastIntensity = 0;
+let arpCursor = 0;        // walks the arp shape independently of the pattern
 
-// a soft sustained pad underneath everything — three layers that retune to follow the
-// current chord (see updateDroneChord), an octave below the arpeggio register
-function startDrone(){
-  const freqs = CHORDS[0].map(f=>f/2);
-  dronePad = { oscs:[], gains:[] };
-  for(const f of freqs){
-    const osc = audioCtx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.value = f;
-    const g = audioCtx.createGain();
-    g.gain.value = 0.33;
-    osc.connect(g); g.connect(musicGain);
-    osc.start();
-    dronePad.oscs.push(osc); dronePad.gains.push(g);
-  }
-}
-
-// glides the sustained pad to the new chord's notes instead of snapping, so chord changes
-// sound like a chord change rather than a click
-function updateDroneChord(freqs){
-  if(!dronePad) return;
-  dronePad.oscs.forEach((osc,i)=>{ osc.frequency.setTargetAtTime(freqs[i]/2, audioCtx.currentTime, 0.6); });
-}
-
-// three quick ascending plucks through the current chord, landing on the pulse — this is
-// what turns the beat from a lone kick into an actual musical phrase
-function playChordArpeggio(freqs, intensity){
-  if(!audioCtx) return;
-  const t0 = audioCtx.currentTime;
-  freqs.forEach((f,i)=>{
-    const t = t0 + i*0.085;
-    const osc = audioCtx.createOscillator();
-    osc.type = 'triangle';
-    osc.frequency.value = f;
-    const g = audioCtx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.22*intensity, t+0.015);
-    g.gain.exponentialRampToValueAtTime(0.0001, t+0.32);
-    osc.connect(g); g.connect(musicGain);
-    osc.start(t); osc.stop(t+0.34);
-  });
-}
-
-// one percussive low thump per core-pulse cycle — pitch drops fast, envelope is a quick
-// attack and a longer decay, like a heartbeat rather than a click
-function playCoreThump(intensity){
-  if(!audioCtx) return;
-  const t = audioCtx.currentTime;
-  const osc = audioCtx.createOscillator();
-  osc.type = 'sine';
-  osc.frequency.setValueAtTime(90, t);
-  osc.frequency.exponentialRampToValueAtTime(42, t+0.28);
-  const g = audioCtx.createGain();
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(0.001, t); // avoid a click, then ramp for real below
-  g.gain.exponentialRampToValueAtTime(2.55*intensity, t+0.02);
-  g.gain.exponentialRampToValueAtTime(0.0001, t+0.38);
-  osc.connect(g); g.connect(musicGain);
-  osc.start(t); osc.stop(t+0.4);
-}
-
-// music only plays during an actual run — silent at the menu, level select, and result
-// screens, so it doesn't just drone forever in the background
-function musicShouldPlay(){
-  return state==='playing' || state==='exploding' || state==='levelup';
-}
-
-// called once per frame with the same `elapsed` that drives the core's visual pulse
-// (drawCore's `pulse = 1 + Math.sin(elapsed*3.2)*0.06`) — the core is at its biggest, i.e.
-// mid-pulse, right when that sine hits its peak, not when it merely starts rising. A peak is
-// where the derivative (cosine) crosses from positive to negative, so that's what's tracked
-// here instead of the sine's zero-crossing, to land the thump on the pulse itself.
-function updateMusic(){
-  if(!audioCtx) return;
-  const active = musicShouldPlay();
-  musicActiveGain.gain.setTargetAtTime(active ? 1 : 0, audioCtx.currentTime, 0.4);
-  const pulseCos = Math.cos(elapsed*3.2);
-  if(active && pulseCos<=0 && lastPulseCos>0){
-    pulseCount++;
-    if(pulseCount % CHORD_LEN_PULSES === 0){
-      chordIndex = (chordIndex+1) % CHORDS.length;
-      updateDroneChord(CHORDS[chordIndex]);
-    }
-    const intensity = corePhase>=2 ? 1.3 : 1;
-    playCoreThump(intensity);
-    playChordArpeggio(CHORDS[chordIndex], intensity);
-  }
-  lastPulseCos = pulseCos;
-}
-
-function setMusicMuted(muted){
-  musicMuted = muted;
-  localStorage.setItem(MUSIC_MUTED_KEY, muted ? '1' : '0');
-  if(musicGain) musicGain.gain.value = muted ? 0 : 2.1;
-}
-
-// ---- sound effects: separate from music, always audible when supported, sharing the same
-// limiter so a burst of hits/severs never distorts alongside the music ----
 let noiseBuffer = null;
 function getNoiseBuffer(){
   if(noiseBuffer) return noiseBuffer;
   const len = audioCtx.sampleRate;
   noiseBuffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
-  const data = noiseBuffer.getChannelData(0);
-  for(let i=0;i<len;i++) data[i] = Math.random()*2-1;
+  const d = noiseBuffer.getChannelData(0);
+  for(let i=0;i<len;i++) d[i] = Math.random()*2-1;
   return noiseBuffer;
 }
 
-function playTone({freq, freqEnd=null, dur=0.15, type='sine', peak=0.3, attack=0.006}){
+// ---------- note math ----------
+const PITCH = { C:0, 'C#':1, D:2, 'D#':3, E:4, F:5, 'F#':6, G:7, 'G#':8, A:9, 'A#':10, B:11 };
+const SCALES = {
+  aeolian:  [0,2,3,5,7,8,10],
+  dorian:   [0,2,3,5,7,9,10],
+  phrygian: [0,1,3,5,7,8,10],
+  harm:     [0,2,3,5,7,8,11]   // harmonic minor — the raised 7th is the "villain" colour
+};
+function midiOf(name, oct){ return PITCH[name] + 12*(oct+1); }
+function hz(midi){ return 440*Math.pow(2,(midi-69)/12); }
+function degSemi(scale, deg){
+  const n = scale.length, o = Math.floor(deg/n);
+  return scale[((deg%n)+n)%n] + 12*o;
+}
+function degHz(rootMidi, scale, deg){ return hz(rootMidi + degSemi(scale, deg)); }
+function chordDeg(scale, rootDeg, i){
+  const tri = [0,2,4], n = scale.length;
+  return rootDeg + tri[((i%3)+3)%3] + n*Math.floor(i/3);
+}
+function p16(s){ s = s || '................'; return s.length>=16 ? s.slice(0,16) : s + '.'.repeat(16-s.length); }
+
+// ---------- audio graph ----------
+function ensureAudio(){
+  if(audioCtx) return;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if(!Ctx) return; // unsupported browser — music is a nice-to-have, never block play over it
+  audioCtx = new Ctx();
+
+  musicGain = audioCtx.createGain();
+  musicGain.gain.value = musicMuted ? 0 : MUSIC_VOL;
+  musicActiveGain = audioCtx.createGain();
+  musicActiveGain.gain.value = 0; // silent until updateMusic() sees a run actually start
+  sfxGain = audioCtx.createGain();
+  sfxGain.gain.value = 1;
+
+  // a limiter right before the destination keeps a dense mix loud without digital crackle;
+  // the death cue shares it so it never spikes into distortion over the music
+  const limiter = audioCtx.createDynamicsCompressor();
+  limiter.threshold.value = -8; limiter.knee.value = 6; limiter.ratio.value = 14;
+  limiter.attack.value = 0.003; limiter.release.value = 0.1;
+
+  musicGain.connect(musicActiveGain); musicActiveGain.connect(limiter);
+  sfxGain.connect(limiter);
+  limiter.connect(audioCtx.destination);
+
+  drumBus = audioCtx.createGain(); drumBus.gain.value = 0.9;
+  drumBus.connect(musicGain);
+  // sidechain: everything tonal ducks under each kick, which is what makes a four-on-floor
+  // groove breathe instead of turning into mud
+  pumpBus = audioCtx.createGain(); pumpBus.gain.value = 1;
+  pumpBus.connect(musicGain);
+
+  // one shared dotted-eighth feedback delay (3 sixteenths) — the arp and lead send into it,
+  // which is most of why the melodies read as "produced" rather than as bare oscillators
+  delayNode = audioCtx.createDelay(1.0);
+  delayNode.delayTime.value = STEP_DUR*3;
+  delayFb = audioCtx.createGain(); delayFb.gain.value = 0.33;
+  delayWet = audioCtx.createGain(); delayWet.gain.value = 0.30;
+  const delayTone = audioCtx.createBiquadFilter();
+  delayTone.type = 'lowpass'; delayTone.frequency.value = 2400;
+  delayNode.connect(delayFb); delayFb.connect(delayNode);
+  delayNode.connect(delayTone); delayTone.connect(delayWet); delayWet.connect(pumpBus);
+
+  startPad();
+}
+// browsers block audio until a real user gesture — the first click or keypress anywhere
+// starts it, whatever that click/keypress happened to be for
+window.addEventListener('pointerdown', ensureAudio, { once:true });
+window.addEventListener('keydown', ensureAudio, { once:true });
+
+function setMusicMuted(muted){
+  musicMuted = muted;
+  localStorage.setItem(MUSIC_MUTED_KEY, muted ? '1' : '0');
+  if(musicGain) musicGain.gain.value = muted ? 0 : MUSIC_VOL;
+}
+
+// the one surviving sound effect: the run-ending death cue. A low descending tone plus a
+// filtered noise thud, routed past the music duck so it always cuts through.
+function playDeathSfx(){
   if(!audioCtx) return;
   const t = audioCtx.currentTime;
   const osc = audioCtx.createOscillator();
-  osc.type = type;
-  osc.frequency.setValueAtTime(freq, t);
-  if(freqEnd!=null) osc.frequency.exponentialRampToValueAtTime(Math.max(freqEnd,1), t+dur);
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(320, t);
+  osc.frequency.exponentialRampToValueAtTime(55, t+0.45);
   const g = audioCtx.createGain();
   g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(peak, t+attack);
-  g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  g.gain.exponentialRampToValueAtTime(0.5, t+0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+0.5);
   osc.connect(g); g.connect(sfxGain);
-  osc.start(t); osc.stop(t+dur+0.02);
+  osc.start(t); osc.stop(t+0.52);
+  noise(t, 0.34, 'lowpass', 520, 0.6, 0.4, sfxGain);
 }
 
-function playNoiseBurst({dur=0.12, filterFreq=1500, filterQ=1, peak=0.3}){
-  if(!audioCtx) return;
-  const t = audioCtx.currentTime;
+// ---------- voices ----------
+// a sustained three-note bed that glides to each new chord instead of snapping to it
+function startPad(){
+  padGain = audioCtx.createGain(); padGain.gain.value = 0.115;
+  const filt = audioCtx.createBiquadFilter();
+  filt.type = 'lowpass'; filt.frequency.value = 1400; filt.Q.value = 0.6;
+  padGain.connect(filt); filt.connect(pumpBus);
+  padVoices = [];
+  for(let i=0;i<3;i++){
+    const osc = audioCtx.createOscillator();
+    osc.type = i===2 ? 'triangle' : 'sine';
+    osc.frequency.value = 110;
+    const g = audioCtx.createGain(); g.gain.value = i===2 ? 0.35 : 0.5;
+    osc.connect(g); g.connect(padGain);
+    osc.start();
+    padVoices.push(osc);
+  }
+}
+function padChord(freqs, when){
+  if(!padVoices) return;
+  padVoices.forEach((osc,i)=>{ osc.frequency.setTargetAtTime(freqs[i % freqs.length], when, 0.22); });
+}
+
+function kick(when, peak, deep){
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sine';
+  const f0 = deep ? 132 : 108, f1 = deep ? 42 : 50, dur = deep ? 0.42 : 0.24;
+  osc.frequency.setValueAtTime(f0, when);
+  osc.frequency.exponentialRampToValueAtTime(f1, when+0.09);
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(peak, when+0.006);
+  g.gain.exponentialRampToValueAtTime(0.0001, when+dur);
+  osc.connect(g); g.connect(drumBus);
+  osc.start(when); osc.stop(when+dur+0.02);
+  // sidechain duck — tonal parts drop out under the kick and swell back
+  if(pumpBus){
+    pumpBus.gain.setValueAtTime(deep ? 0.34 : 0.5, when);
+    pumpBus.gain.linearRampToValueAtTime(1, when + (deep ? 0.30 : 0.20));
+  }
+}
+function noise(when, dur, type, freq, q, peak, dest){
   const src = audioCtx.createBufferSource();
   src.buffer = getNoiseBuffer();
   const filt = audioCtx.createBiquadFilter();
-  filt.type = 'bandpass'; filt.frequency.value = filterFreq; filt.Q.value = filterQ;
+  filt.type = type; filt.frequency.value = freq; filt.Q.value = q;
   const g = audioCtx.createGain();
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(peak, t+0.006);
-  g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
-  src.connect(filt); filt.connect(g); g.connect(sfxGain);
-  src.start(t); src.stop(t+dur+0.02);
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(peak, when+0.004);
+  g.gain.exponentialRampToValueAtTime(0.0001, when+dur);
+  src.connect(filt); filt.connect(g); g.connect(dest || drumBus);
+  src.start(when); src.stop(when+dur+0.02);
+}
+function snare(when, peak){
+  noise(when, 0.17, 'bandpass', 1850, 0.7, peak);
+  const osc = audioCtx.createOscillator();
+  osc.type = 'triangle'; osc.frequency.setValueAtTime(196, when);
+  osc.frequency.exponentialRampToValueAtTime(150, when+0.08);
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(peak*0.6, when+0.004);
+  g.gain.exponentialRampToValueAtTime(0.0001, when+0.09);
+  osc.connect(g); g.connect(drumBus);
+  osc.start(when); osc.stop(when+0.11);
+}
+function clap(when, peak){
+  for(let i=0;i<3;i++) noise(when+i*0.011, 0.09, 'bandpass', 1500+i*260, 1.1, peak*(1-i*0.2));
+  noise(when+0.03, 0.19, 'bandpass', 1100, 0.5, peak*0.5);
+}
+function hat(when, open, peak){
+  noise(when, open?0.16:0.036, 'highpass', open?7200:8600, 0.7, peak);
 }
 
-// one distinct timbre per attack type, fired once per spawn event (not once per pellet in a
-// multi-shot volley) so a fan/ring burst reads as one sound, not a machine-gun of clicks
-function playProjectileSfx(type){
-  switch(type){
-    case 'straight': playTone({freq:520, freqEnd:340, dur:0.1, type:'triangle', peak:0.22}); break;
-    case 'fan': playNoiseBurst({dur:0.14, filterFreq:1500, filterQ:0.8, peak:0.26}); break;
-    case 'ring': playNoiseBurst({dur:0.2, filterFreq:900, filterQ:0.6, peak:0.26}); break;
-    case 'sniperWarn': playTone({freq:1500, dur:0.5, type:'sawtooth', peak:0.1}); break;
-    case 'sniperFire': playTone({freq:1900, freqEnd:500, dur:0.12, type:'square', peak:0.24}); break;
-    case 'homing': playTone({freq:260, freqEnd:480, dur:0.3, type:'sine', peak:0.18}); break;
-    case 'bomb': playTone({freq:130, freqEnd:85, dur:0.25, type:'sine', peak:0.24}); break;
-    case 'bombExplode': playNoiseBurst({dur:0.32, filterFreq:400, filterQ:0.5, peak:0.4}); break;
-    case 'laserWarn': playTone({freq:180, dur:0.75, type:'sawtooth', peak:0.1}); break;
-    case 'laserFire': playNoiseBurst({dur:0.5, filterFreq:2600, filterQ:2, peak:0.3}); break;
-    case 'wave': playTone({freq:420, freqEnd:640, dur:0.4, type:'sine', peak:0.16}); break;
-    case 'spiral': playTone({freq:680, freqEnd:1080, dur:0.32, type:'triangle', peak:0.16}); break;
+function bassNote(when, freq, len, voice){
+  const dur = Math.max(0.08, len*STEP_DUR*0.92);
+  const g = audioCtx.createGain();
+  const filt = audioCtx.createBiquadFilter();
+  filt.type = 'lowpass'; filt.Q.value = voice==='reese' ? 7 : 4;
+  filt.frequency.setValueAtTime(voice==='sub' ? 420 : 1150, when);
+  filt.frequency.exponentialRampToValueAtTime(voice==='sub' ? 180 : 260, when+dur*0.8);
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(0.42, when+0.012);
+  g.gain.setValueAtTime(0.42, when+dur*0.6);
+  g.gain.exponentialRampToValueAtTime(0.0001, when+dur);
+  filt.connect(g); g.connect(pumpBus);
+  const shapes = { sub:['sine'], saw:['sawtooth','sine'], square:['square','sine'], reese:['sawtooth','sawtooth'] };
+  const types = shapes[voice] || shapes.saw;
+  types.forEach((t,i)=>{
+    const osc = audioCtx.createOscillator();
+    osc.type = t;
+    osc.frequency.value = (voice==='reese' && i===1) ? freq*1.006 : (i===1 ? freq/2 : freq);
+    osc.connect(filt);
+    osc.start(when); osc.stop(when+dur+0.03);
+  });
+}
+
+function arpNote(when, freq, peak, voice){
+  const dur = voice==='bell' ? 0.55 : 0.26;
+  const osc = audioCtx.createOscillator();
+  osc.type = voice==='saw' ? 'sawtooth' : (voice==='bell' ? 'sine' : 'triangle');
+  osc.frequency.value = freq;
+  const filt = audioCtx.createBiquadFilter();
+  filt.type = 'lowpass'; filt.frequency.value = voice==='saw' ? 2600 : 4200; filt.Q.value = 1;
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(peak, when+0.005);
+  g.gain.exponentialRampToValueAtTime(0.0001, when+dur);
+  osc.connect(filt); filt.connect(g); g.connect(pumpBus);
+  if(delayNode) g.connect(delayNode);
+  osc.start(when); osc.stop(when+dur+0.02);
+}
+
+function leadNote(when, freq, len, peak, voice){
+  const dur = Math.max(0.12, len*STEP_DUR*0.95);
+  const filt = audioCtx.createBiquadFilter();
+  filt.type = 'lowpass'; filt.Q.value = 5;
+  filt.frequency.setValueAtTime(4200, when);
+  filt.frequency.exponentialRampToValueAtTime(1500, when+dur);
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(peak, when+0.018);
+  g.gain.setValueAtTime(peak, when+dur*0.65);
+  g.gain.exponentialRampToValueAtTime(0.0001, when+dur);
+  filt.connect(g); g.connect(pumpBus);
+  if(delayNode) g.connect(delayNode);
+  const t = voice==='square' ? 'square' : (voice==='tri' ? 'triangle' : 'sawtooth');
+  [-6, 6].forEach(cents=>{
+    const osc = audioCtx.createOscillator();
+    osc.type = t;
+    osc.frequency.value = freq*Math.pow(2, cents/1200);
+    osc.connect(filt);
+    osc.start(when); osc.stop(when+dur+0.03);
+  });
+}
+
+// long upward sweep under build sections, plus the crash that lands on the drop
+function riser(when, dur){
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(110, when);
+  osc.frequency.exponentialRampToValueAtTime(1900, when+dur);
+  const filt = audioCtx.createBiquadFilter();
+  filt.type = 'bandpass'; filt.Q.value = 3;
+  filt.frequency.setValueAtTime(400, when);
+  filt.frequency.exponentialRampToValueAtTime(5200, when+dur);
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(0.16, when+dur*0.85);
+  g.gain.exponentialRampToValueAtTime(0.0001, when+dur);
+  osc.connect(filt); filt.connect(g); g.connect(pumpBus);
+  osc.start(when); osc.stop(when+dur+0.05);
+  noise(when, dur, 'highpass', 3000, 0.5, 0.10, pumpBus);
+}
+function crash(when){
+  noise(when, 1.1, 'highpass', 4200, 0.4, 0.34);
+  noise(when, 0.5, 'bandpass', 900, 0.4, 0.20);
+}
+
+// ---------- the album: 20 level tracks ----------
+// Every track is a 16-bar loop of four 4-bar phrases: A (bare) / A' (arp opens) / B (contrast,
+// melody enters) / A'' (return, fill on the last bar). Pattern strings are 16 sixteenths:
+// 'x' hit, 'X' accent, 'o' open hat, '.' rest. In bass strings digits 1-6 pick a chord tone;
+// in lead strings digits 1-9 are scale degrees, '-' sustains. The set is one family: same
+// tempo, kit and delay, minor throughout — what moves is key, mode, and density, tracking the
+// level-select hue sweep from cyan to magenta.
+const LEVEL_TRACKS = [
+{ n:1, name:'COLD START', root:'A', oct:2, scale:'aeolian',
+  progA:[0,5,2,6], progB:[3,5,0,4],
+  kick:'x.......x.......', snare:'........x.......', hat:'....x.......x...', hatVol:0.13,
+  bass:'1.......1...3...', bassVoice:'sub',
+  arp:'..x...x...x...x.', shape:[0,1,2,1], arpVoice:'pluck', arpOct:2,
+  lead:['5---3---1-------','2---3---5-------','5---6---5---3---','2---1-----------'],
+  leadVoice:'tri', leadOct:2 },
+
+{ n:2, name:'FIRST CONTACT', root:'A', oct:2, scale:'dorian',
+  progA:[0,6,3,0], progB:[3,6,0,5],
+  kick:'x.......x...x...', snare:'........x.......', hat:'..x...x...x...x.', hatVol:0.14,
+  bass:'1...1...3...3...', bassVoice:'sub',
+  arp:'x.x.x.x.x.x.x.x.', shape:[0,2,1,3], arpVoice:'pluck', arpOct:2,
+  lead:['3---5---6---5---','3---2---1-------','5---6---8---6---','5---3---2-------'],
+  leadVoice:'tri', leadOct:2 },
+
+{ n:3, name:'SPIN UP', root:'D', oct:2, scale:'aeolian',
+  progA:[0,3,5,6], progB:[5,6,0,0],
+  kick:'x...x...x...x...', snare:'....x.......x...', hat:'..x...x...x...x.', hatVol:0.15,
+  bass:'1.1.1...3.3.3...', bassVoice:'saw',
+  arp:'..x.x...x.x.x...', shape:[0,1,2,3], arpVoice:'pluck', arpOct:2,
+  lead:['1---3---5---3---','4---3---2-------','5---5---6---8---','6---5---3-------'],
+  leadVoice:'tri', leadOct:2 },
+
+{ n:4, name:'TETHER', root:'D', oct:2, scale:'dorian',
+  progA:[0,2,6,3], progB:[3,0,6,4],
+  kick:'x...x...x...x..x', snare:'....x.......x...', hat:'x.x.x.x.x.x.x.x.', hatVol:0.14,
+  bass:'1...1.3.1...2...', bassVoice:'saw',
+  arp:'..x...x...x.x.x.', shape:[2,1,0,1], arpVoice:'bell', arpOct:2,
+  lead:['2---1---2---4---','5-------3---2---','6---5---4---5---','3---2---1-------'],
+  leadVoice:'tri', leadOct:2 },
+
+{ n:5, name:'CROSSFIRE', root:'E', oct:2, scale:'aeolian',
+  progA:[0,5,6,4], progB:[3,5,6,0], clapSnare:true,
+  kick:'x...x...x...x...', snare:'....x.......x...', hat:'x.xxx.x.x.xxx.x.', hatVol:0.15,
+  bass:'1.1.3...1.1.2...', bassVoice:'saw',
+  arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,2], arpVoice:'pluck', arpOct:2,
+  lead:['5---5-4-3---2---','1-------3---5---','6---5---6---8---','5---3---2-------'],
+  leadVoice:'saw', leadOct:2 },
+
+{ n:6, name:'NEEDLE', root:'E', oct:2, scale:'phrygian',
+  progA:[0,1,0,6], progB:[1,0,6,0],
+  kick:'x...x..xx...x...', snare:'....x.......x...', hat:'..x...x...x...xx', hatVol:0.15,
+  bass:'1...1..11...3...', bassVoice:'square',
+  arp:'..x.x.x...x.x.x.', shape:[1,0,2,0], arpVoice:'pluck', arpOct:2,
+  lead:['1-2-1---5---4---','2---1-----------','5---4---5---6---','4---2---1-------'],
+  leadVoice:'saw', leadOct:2 },
+
+{ n:7, name:'GLASSWORK', root:'C', oct:2, scale:'aeolian',
+  progA:[0,4,5,2], progB:[5,2,3,4],
+  kick:'x...x...x...x...', snare:'....x.......x...', hat:'x.x.x.x.x.x.oxo.', hatVol:0.14,
+  bass:'1...3...1...4...', bassVoice:'sub',
+  arp:'x.x.x.x.x.x.x.x.', shape:[0,2,3,4], arpVoice:'bell', arpOct:3,
+  lead:['8---8-7-5---6---','5---3-----------','6---8---9---8---','6---5---3-------'],
+  leadVoice:'tri', leadOct:2 },
+
+{ n:8, name:'LONG SHADOW', root:'C', oct:2, scale:'dorian',
+  progA:[0,6,5,3], progB:[3,5,6,0],
+  kick:'x.....x.x.......', snare:'....x.......x...', hat:'..x...x...x...x.', hatVol:0.14,
+  bass:'1.....3.1...2.4.', bassVoice:'reese',
+  arp:'..x...x.x.x...x.', shape:[0,1,2,1], arpVoice:'pluck', arpOct:2,
+  lead:['3---2---1---2---','4-------5---3---','1---2---3---5---','4---3---2-------'],
+  leadVoice:'tri', leadOct:2 },
+
+{ n:9, name:'SPLINTER', root:'G', oct:2, scale:'aeolian',
+  progA:[0,3,6,5], progB:[6,5,3,0], clapSnare:true,
+  kick:'x...x...x..xx...', snare:'....x.......x...', hat:'x.xxx.x.x.xxx.xx', hatVol:0.15,
+  bass:'1.1.1.3.1.1.4.4.', bassVoice:'saw',
+  arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,3], arpVoice:'saw', arpOct:2,
+  lead:['5-5-4---3-3-2---','1---3---5-------','6-6-5---8---6---','5---3---1-------'],
+  leadVoice:'saw', leadOct:2 },
+
+{ n:10, name:'HALFWAY DOWN', root:'G', oct:2, scale:'phrygian',
+  progA:[0,1,5,4], progB:[1,6,0,0],
+  kick:'x...x...x...x.x.', snare:'....x.......x..x', hat:'x.x.x.x.x.x.x.xo', hatVol:0.16,
+  bass:'1...1...2...1...', bassVoice:'reese',
+  arp:'..x.x...x.x.x.x.', shape:[0,1,2,4], arpVoice:'pluck', arpOct:2,
+  lead:['5---6---5---4---','2---1-----------','8---9---8---6---','5---4---2-------'],
+  leadVoice:'saw', leadOct:2 },
+
+{ n:11, name:'IRONWORK', root:'F', oct:2, scale:'aeolian',
+  progA:[0,5,3,6], progB:[3,6,5,0],
+  kick:'x...x...xx..x...', snare:'....x.......x...', hat:'..xx..xx..xx..xx', hatVol:0.15,
+  bass:'1...1...2...3...', bassVoice:'square',
+  arp:'x...x.x.x...x.x.', shape:[0,3,2,1], arpVoice:'saw', arpOct:2,
+  lead:['1---1-2-3---5---','3---2---1-------','5---6---5---8---','6---5---3-------'],
+  leadVoice:'square', leadOct:2 },
+
+{ n:12, name:'UNDERTOW', root:'F', oct:2, scale:'dorian',
+  progA:[0,3,0,6], progB:[6,3,5,0],
+  kick:'x..x..x...x.x...', snare:'....x.......x...', hat:'x.x.x.x.x.x.x.x.', hatVol:0.14,
+  bass:'1..1..3...1.2...', bassVoice:'reese',
+  arp:'..x.x.x.x.x.x.x.', shape:[4,2,0,2], arpVoice:'bell', arpOct:3,
+  lead:['6---5---6---8---','5---3---2-------','3---5---6---5---','2---1-----------'],
+  leadVoice:'tri', leadOct:2 },
+
+{ n:13, name:'HAIRLINE', root:'B', oct:2, scale:'aeolian',
+  progA:[0,6,2,5], progB:[5,2,6,0], clapSnare:true,
+  kick:'x...x...x...x.x.', snare:'....x.......x...', hat:'x.xxx.xxx.xxx.xx', hatVol:0.15,
+  bass:'1.1.3.3.1.1.4.4.', bassVoice:'saw',
+  arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,5], arpVoice:'saw', arpOct:2,
+  lead:['8-7-5---6-5-3---','2---1-------5---','8---8-9-8---6---','5---3---2-------'],
+  leadVoice:'saw', leadOct:2 },
+
+{ n:14, name:'FRACTURE', root:'B', oct:2, scale:'phrygian',
+  progA:[0,1,6,5], progB:[1,0,5,6],
+  kick:'x..xx...x..xx...', snare:'....x.......x...', hat:'..x...x...x...x.', hatVol:0.16,
+  bass:'1..11...1..14...', bassVoice:'square',
+  arp:'x.x...x.x.x...x.', shape:[1,0,4,2], arpVoice:'pluck', arpOct:2,
+  lead:['2---1---2---4---','5---4---2-------','9---8---6---5---','4---2---1-------'],
+  leadVoice:'square', leadOct:2 },
+
+{ n:15, name:'SATURATE', root:'F#', oct:2, scale:'aeolian',
+  progA:[0,4,6,3], progB:[3,6,4,0],
+  kick:'x...x...x...x...', snare:'....x.......x...', hat:'xxxxxxxxxxxxxxxx', hatVol:0.11,
+  bass:'1.1.1.1.3.3.2.2.', bassVoice:'reese',
+  arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,2], arpVoice:'saw', arpOct:2,
+  lead:['5---5---8---8---','6-5-3---2-------','1---3---5---6---','8---6---5-------'],
+  leadVoice:'saw', leadOct:2 },
+
+{ n:16, name:'VENOM', root:'F#', oct:2, scale:'harm',
+  progA:[0,3,4,0], progB:[5,3,4,0], clapSnare:true,
+  kick:'x...x..xx...x..x', snare:'....x.......x...', hat:'x.xxx.x.x.xxx.x.', hatVol:0.15,
+  bass:'1...1..13...2...', bassVoice:'square',
+  arp:'..x.x.x.x.x.x.x.', shape:[0,1,2,4], arpVoice:'saw', arpOct:2,
+  lead:['1---2---3---5---','7---8-----------','5---4---3---2---','7---8-----------'],
+  leadVoice:'square', leadOct:2 },
+
+{ n:17, name:'BLACKOUT', root:'C#', oct:2, scale:'aeolian',
+  progA:[0,5,6,4], progB:[6,4,5,0],
+  kick:'x...x..xx...x...', snare:'....x.......x...', hat:'x.xxx.xxx.xxx.xo', hatVol:0.14,
+  bass:'1.1.1.3.1.1.5.5.', bassVoice:'reese',
+  arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,6], arpVoice:'saw', arpOct:2,
+  lead:['5---8---7---5---','6---5---3-------','9---8---6---5---','3---2---1-------'],
+  leadVoice:'saw', leadOct:2 },
+
+{ n:18, name:'OVERDRIVE', root:'C#', oct:2, scale:'phrygian',
+  progA:[0,1,4,0], progB:[1,5,0,6],
+  kick:'x..xx..xx..xx..x', snare:'....x.......x...', hat:'xxxxxxxxxxxxxxxx', hatVol:0.11,
+  bass:'1..11..11..13..3', bassVoice:'reese',
+  arp:'x.x.x.x.x.x.x.x.', shape:[1,0,2,0], arpVoice:'saw', arpOct:2,
+  lead:['2-1-2---5---4---','2---1-----------','8-9-8---5---4---','2---1-----------'],
+  leadVoice:'square', leadOct:2 },
+
+{ n:19, name:'TERMINAL', root:'G#', oct:2, scale:'harm',
+  progA:[0,4,5,4], progB:[3,4,0,0], clapSnare:true,
+  kick:'x...x...x...x.x.', snare:'....x.......x.x.', hat:'x.xxx.xxx.xxx.xx', hatVol:0.15,
+  bass:'1.1.3.3.1.1.4.4.', bassVoice:'square',
+  arp:'..x.x.x.x.x.x.x.', shape:[0,2,4,5], arpVoice:'saw', arpOct:2,
+  lead:['8---7---8---9---','8---5---3-------','5---7---8---7---','5---3---1-------'],
+  leadVoice:'saw', leadOct:2 },
+
+{ n:20, name:'COLLAPSE', root:'A', oct:2, scale:'harm',
+  progA:[0,3,4,5], progB:[5,4,0,0], clapSnare:true,
+  kick:'x..xx..xx...x..x', snare:'....x...x...x..x', hat:'xxxxxxxxxxxxxxxx', hatVol:0.12,
+  bass:'1.1.1.1.3.3.3.3.', bassVoice:'reese',
+  arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,5], arpVoice:'saw', arpOct:2,
+  lead:['8---7---5---7---','8---9---8-------','5---6---7---8---','9---8---7-------'],
+  leadVoice:'saw', leadOct:2 }
+];
+
+// ---------- ENDLESS: one long-form piece that actually loops ----------
+// 96 bars, seamless: drops in at full strength, modulates A minor -> C minor at the halfway
+// mark, strips to a breakdown, rebuilds, and ends on a build that resolves onto bar 0 — so
+// the loop point is a drop rather than a seam.
+const ENDLESS_LEAD_A = ['1---3---5---3---','2---1-------5---','6---5---3---5---','2---1-----------'];
+const ENDLESS_LEAD_B = ['5---6---8---6---','5---3---2-------','8---9---8---6---','5---6---5-------'];
+const ENDLESS_LEAD_C = ['8-7-5---3-2-1---','5---3-----------','6-5-6---8---9---','8---5---3-------'];
+
+const ENDLESS_TRACK = {
+  name:'THE LONG DARK', endless:true, bars:96,
+  sections:[
+    { at:0,  len:16, label:'DROP I', root:'A', oct:2, scale:'aeolian',
+      prog:[0,5,2,6], clapSnare:true,
+      kick:'x...x...x...x...', snare:'....x.......x...', hat:'x.xxx.x.x.xxx.x.', hatVol:0.15,
+      bass:'1.1.1.3.1.1.2.2.', bassVoice:'reese',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,2], arpVoice:'saw', arpOct:2,
+      lead:ENDLESS_LEAD_A, leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:16, len:16, label:'RIDE', root:'A', oct:2, scale:'dorian',
+      prog:[0,6,3,0],
+      kick:'x...x...x...x..x', snare:'....x.......x...', hat:'xxxxxxxxxxxxxxxx', hatVol:0.10,
+      bass:'1...1.3.1...2...', bassVoice:'saw',
+      arp:'..x.x.x.x.x.x.x.', shape:[0,1,2,4], arpVoice:'pluck', arpOct:2,
+      lead:ENDLESS_LEAD_B, leadVoice:'tri', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:32, len:16, label:'MODULATION', root:'C', oct:2, scale:'aeolian',
+      prog:[0,4,5,2], clapSnare:true,
+      kick:'x...x..xx...x...', snare:'....x.......x...', hat:'x.xxx.xxx.xxx.xo', hatVol:0.14,
+      bass:'1.1.3.3.1.1.4.4.', bassVoice:'square',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,3,4], arpVoice:'bell', arpOct:3,
+      lead:ENDLESS_LEAD_C, leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:48, len:8,  label:'BREAKDOWN', root:'C', oct:2, scale:'aeolian',
+      prog:[5,2,3,4],
+      kick:'x...............', snare:'................', hat:'....x.......x...', hatVol:0.09,
+      bass:'1...............', bassVoice:'sub',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,2], arpVoice:'bell', arpOct:3,
+      lead:ENDLESS_LEAD_B, leadVoice:'tri', leadOct:2, layers:{drums:0,bass:0,arp:1,lead:1,pad:1} },
+
+    { at:56, len:8,  label:'BUILD I', root:'C', oct:2, scale:'aeolian', build:true,
+      prog:[3,3,4,4],
+      kick:'x...x...x...x...', snare:'................', hat:'................', hatVol:0.12,
+      bass:'1...1...1...1...', bassVoice:'reese',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,6], arpVoice:'saw', arpOct:2,
+      lead:ENDLESS_LEAD_C, leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:0,pad:1} },
+
+    { at:64, len:16, label:'DROP II', root:'C', oct:2, scale:'harm',
+      prog:[0,3,4,0], clapSnare:true,
+      kick:'x..xx..xx...x..x', snare:'....x...x...x..x', hat:'xxxxxxxxxxxxxxxx', hatVol:0.12,
+      bass:'1.1.1.1.3.3.3.3.', bassVoice:'reese',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,5], arpVoice:'saw', arpOct:2,
+      lead:ENDLESS_LEAD_C, leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:80, len:8,  label:'REPRISE', root:'A', oct:2, scale:'aeolian',
+      prog:[3,5,0,6],
+      kick:'x...x...x...x...', snare:'....x.......x...', hat:'x.x.x.x.x.x.x.x.', hatVol:0.13,
+      bass:'1...1...3...3...', bassVoice:'saw',
+      arp:'..x...x...x...x.', shape:[0,1,2,1], arpVoice:'pluck', arpOct:2,
+      lead:ENDLESS_LEAD_A, leadVoice:'tri', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:88, len:8,  label:'BUILD II', root:'A', oct:2, scale:'aeolian', build:true,
+      prog:[3,3,4,4],
+      kick:'x...x...x...x...', snare:'................', hat:'................', hatVol:0.12,
+      bass:'1...1...1...1...', bassVoice:'reese',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,6], arpVoice:'saw', arpOct:2,
+      lead:ENDLESS_LEAD_A, leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:0,pad:1} }
+  ]
+};
+
+function endlessSectionAt(bar){
+  const S = ENDLESS_TRACK.sections;
+  for(let i=S.length-1;i>=0;i--) if(bar >= S[i].at) return S[i];
+  return S[0];
+}
+
+// ---------- sequencer ----------
+function trackFor(id){
+  if(id === 'endless') return ENDLESS_TRACK;
+  const n = Math.max(1, Math.min(LEVEL_TRACKS.length, id|0));
+  return LEVEL_TRACKS[n-1];
+}
+
+// Resolves "what is playing in this bar" into one flat descriptor, so scheduleStep doesn't
+// have to care whether it's inside a level loop or an endless section.
+function voicingFor(track, bar, s, intens){
+  const hot = intens >= 0.5;
+  if(track.endless){
+    const loopBar = bar % track.bars;
+    const sec = endlessSectionAt(loopBar);
+    const barInSec = loopBar - sec.at;
+    const prev = endlessSectionAt((sec.at + track.bars - 1) % track.bars);
+    const V = Object.assign({}, sec);
+    V.chordDeg = sec.prog[barInSec % 4];
+    V.leadBar = sec.layers.lead ? sec.lead[barInSec % 4] : null;
+    V.sectionStart = (barInSec === 0 && s === 0);
+    V.isBuild = !!sec.build;
+    V.buildProgress = V.isBuild ? (barInSec*16 + s) / (sec.len*16) : 0;
+    V.crashNow = (V.sectionStart && !V.isBuild && prev.build);
+    V.fill = (!V.isBuild && barInSec === sec.len-1);
+    V.leadPeak = 0.22 + 0.06*intens;
+    V.hatVol = (sec.hatVol||0.14) * (0.85 + 0.3*intens);
+    V.label = sec.label; V.loopBar = loopBar; V.totalBars = track.bars;
+    return V;
+  }
+  const loopBar = bar % 16, phrase = (loopBar/4)|0;
+  const V = Object.assign({}, track);
+  V.layers = { drums:1, bass:1, arp: (phrase>=1 || hot), pad:1, lead:1 };
+  V.chordDeg = (phrase===2 ? track.progB : track.progA)[loopBar % 4];
+  V.leadBar = null; V.leadOctAdj = 0; V.leadPeak = 0.24;
+  if(phrase===2)                V.leadBar = track.lead[loopBar-8];
+  else if(phrase===3 && hot)    V.leadBar = track.lead[loopBar-12];
+  else if(phrase===1 && hot){   V.leadBar = track.lead[loopBar-4]; V.leadOctAdj = -1; V.leadPeak = 0.15; }
+  V.fill = (loopBar % 8) === 7;
+  V.crashNow = (loopBar===0 && s===0 && hot);
+  V.riserNow = (loopBar===15 && s===0 && hot);
+  V.isBuild = false; V.sectionStart = false;
+  V.hatVol = (track.hatVol||0.14) * (phrase===0 && !hot ? 0.7 : 1);
+  V.label = ['A','A′','B','A″'][phrase]; V.loopBar = loopBar; V.totalBars = 16;
+  return V;
+}
+
+function scheduleStep(track, step, when, intens){
+  const bar = (step/16)|0, s = step % 16;
+  const V = voicingFor(track, bar, s, intens);
+  const scale = SCALES[V.scale] || SCALES.aeolian;
+  const rootMidi = midiOf(V.root, V.oct);
+  const cd = V.chordDeg;
+
+  if(V.crashNow) crash(when);
+  if(V.riserNow) riser(when, BAR_DUR);
+  if(V.sectionStart && V.isBuild) riser(when, V.len*BAR_DUR);
+
+  if(s===0 && V.layers.pad){
+    padChord([0,1,2].map(i => degHz(rootMidi+12, scale, chordDeg(scale, cd, i))), when);
+  }
+
+  if(V.layers.drums){
+    if(V.isBuild){
+      const kc = p16(V.kick)[s];
+      if(kc==='x') kick(when, 1.4, false);
+      const p = V.buildProgress;
+      const grid = p<0.40 ? 4 : (p<0.72 ? 2 : 1);
+      if(s % grid === 0) snare(when, 0.20 + 0.42*p);
+    } else {
+      const kc = p16(V.kick)[s];
+      if(kc==='x' || kc==='X') kick(when, kc==='X' ? 1.9 : 1.55, s===0);
+      let sc = p16(V.snare)[s];
+      if(V.fill && (s===12 || s===14 || s===15)) sc = 'x'; // end-of-phrase fill
+      if(sc==='x' || sc==='X'){
+        if(V.clapSnare) clap(when, 0.42); else snare(when, 0.55);
+      }
+      const hc = p16(V.hat)[s], hv = V.hatVol || 0.14;
+      if(hc==='x')      hat(when, false, hv);
+      else if(hc==='o') hat(when, true,  hv*1.3);
+      else if(hc==='X') hat(when, false, hv*1.7);
+    }
+  }
+
+  if(V.layers.bass){
+    const bp = p16(V.bass), c = bp[s];
+    if(c>='1' && c<='6'){
+      let len = 1; while(s+len<16 && bp[s+len]==='-') len++;
+      const idx = c.charCodeAt(0) - 49;
+      bassNote(when, degHz(rootMidi, scale, chordDeg(scale, cd, idx)), len, V.bassVoice);
+    }
+  }
+
+  if(V.layers.arp){
+    if(s===0) arpCursor = 0;
+    const ap = p16(V.arp), c = ap[s];
+    if(c==='x' || c==='X'){
+      const shape = V.shape || [0,2,4,2];
+      const idx = shape[arpCursor % shape.length];
+      arpCursor++;
+      const base = rootMidi + 12*(V.arpOct==null ? 2 : V.arpOct);
+      let f = degHz(base, scale, chordDeg(scale, cd, idx));
+      while(f > 2200) f /= 2; // a tall shape on a high chord can climb into ice-pick territory
+      arpNote(when, f, c==='X' ? 0.26 : 0.19, V.arpVoice);
+    }
+  }
+
+  if(V.leadBar){
+    const lb = p16(V.leadBar), c = lb[s];
+    if(c>='1' && c<='9'){
+      let len = 1; while(s+len<16 && lb[s+len]==='-') len++;
+      const base = rootMidi + 12*((V.leadOct==null?2:V.leadOct) + (V.leadOctAdj||0));
+      leadNote(when, degHz(base, scale, c.charCodeAt(0)-49), len, V.leadPeak||0.24, V.leadVoice);
+    }
   }
 }
 
-function playSeverSfx(){
-  playTone({freq:900, freqEnd:1700, dur:0.09, type:'sine', peak:0.3});
-  playNoiseBurst({dur:0.06, filterFreq:3200, filterQ:1.4, peak:0.14});
-}
+// ---------- driver ----------
+// Called once per frame. Reads the host (which level, how far in, how hot) and keeps the
+// Web Audio clock fed about a sixth of a second ahead of game time.
+function updateMusic(){
+  if(!audioCtx) return;
+  const active = MUSIC_HOST.active();
+  musicActiveGain.gain.setTargetAtTime(active ? 1 : 0, audioCtx.currentTime, 0.4);
 
-function playAbilitySfx(id){
-  switch(id){
-    case 'jump': playTone({freq:400, freqEnd:700, dur:0.16, type:'sine', peak:0.24}); break;
-    case 'dash': playNoiseBurst({dur:0.14, filterFreq:1800, filterQ:0.7, peak:0.26}); break;
-    case 'wall': playTone({freq:300, freqEnd:620, dur:0.22, type:'triangle', peak:0.26}); break;
-    case 'nova': playNoiseBurst({dur:0.3, filterFreq:700, filterQ:0.6, peak:0.4}); break;
-    case 'decoy': playTone({freq:900, freqEnd:1300, dur:0.15, type:'sine', peak:0.2}); break;
-    case 'slowOn': playTone({freq:200, freqEnd:120, dur:0.3, type:'sine', peak:0.2}); break;
-    case 'slowOff': playTone({freq:120, freqEnd:220, dur:0.2, type:'sine', peak:0.18}); break;
-    case 'shieldBlock': playTone({freq:700, freqEnd:1100, dur:0.25, type:'triangle', peak:0.3}); break;
-    case 'hit': playNoiseBurst({dur:0.2, filterFreq:300, filterQ:0.5, peak:0.3}); break;
+  const t = MUSIC_HOST.time();
+  const id = MUSIC_HOST.trackId();
+
+  // new track, or the clock rewound (a fresh run) — resync rather than drift
+  if(id !== curTrackId || t < lastGameTime - 0.05){
+    curTrackId = id;
+    nextStep = Math.max(0, Math.ceil((t - MUSIC_T0)/STEP_DUR));
+    musicAnchor = audioCtx.currentTime - t;
+    lastIntensity = MUSIC_HOST.intensity();
+    arpCursor = 0;
+  }
+  lastGameTime = t;
+
+  if(!active){ musicAnchor = audioCtx.currentTime - t; return; }
+
+  // game time stalls during pause and hit-stop; push the anchor forward by the same amount
+  // so the music stalls with the core instead of running on under a frozen screen
+  const drift = (audioCtx.currentTime - musicAnchor) - t;
+  if(drift > 0.008) musicAnchor += drift;
+
+  const intens = MUSIC_HOST.intensity();
+  if(intens >= 0.5 && lastIntensity < 0.5) crash(audioCtx.currentTime + 0.01);
+  lastIntensity = intens;
+
+  const track = trackFor(id);
+  let guard = 0;
+  while(MUSIC_T0 + nextStep*STEP_DUR <= t + LOOKAHEAD && guard++ < 96){
+    const gt = MUSIC_T0 + nextStep*STEP_DUR;
+    scheduleStep(track, nextStep, Math.max(audioCtx.currentTime + 0.005, musicAnchor + gt), intens);
+    nextStep++;
   }
 }
 
@@ -1825,7 +2306,6 @@ function playerPredicted(lead){
 }
 
 function spawnStraight(){
-  playProjectileSfx('straight');
   const sm = speedMult();
   const targ = playerPredicted(rand(0.1,0.5));
   // deterministic once fired: a clean aimed line the player can read and dodge,
@@ -1841,7 +2321,6 @@ function spawnStraight(){
 }
 
 function spawnFan(){
-  playProjectileSfx('fan');
   const sm = speedMult();
   const targ = playerPredicted(0.3);
   const base = Math.atan2(targ.y-CY, targ.x-CX);
@@ -1860,7 +2339,6 @@ function spawnFan(){
 }
 
 function spawnRing(){
-  playProjectileSfx('ring');
   const sm = speedMult();
   const count = 12 + Math.min(Math.floor(effectiveDiffLevel()/3), 7);
   const speed = R*0.38*sm;
@@ -1877,13 +2355,11 @@ function spawnRing(){
 }
 
 function spawnSniper(){
-  playProjectileSfx('sniperWarn');
   const targ = playerPredicted(0);
   const a = Math.atan2(targ.y-CY, targ.x-CX);
   telegraphs.push({
     type:'sniperWarn', angle:a, t:0, dur:0.55,
     onDone(){
-      playProjectileSfx('sniperFire');
       const sm = speedMult();
       const speed = R*1.85*sm;
       const sr = spawnR();
@@ -1897,7 +2373,6 @@ function spawnSniper(){
 }
 
 function spawnHoming(){
-  playProjectileSfx('homing');
   const sm = speedMult();
   const a = rand(0,Math.PI*2);
   const speed = R*0.32*sm;
@@ -1911,7 +2386,6 @@ function spawnHoming(){
 }
 
 function spawnBomb(){
-  playProjectileSfx('bomb');
   const targ = clampToArena(playerPredicted(0.9));
   const a = Math.atan2(targ.y-CY, targ.x-CX);
   const sr = spawnR();
@@ -1927,7 +2401,6 @@ function spawnBomb(){
 }
 
 function explodeBomb(p){
-  playProjectileSfx('bombExplode');
   const sm = speedMult();
   const count = 10;
   const speed = R*0.5*sm;
@@ -1946,20 +2419,17 @@ function explodeBomb(p){
 }
 
 function spawnLaser(){
-  playProjectileSfx('laserWarn');
   const targ = playerPredicted(0.15);
   const a = Math.atan2(targ.y-CY, targ.x-CX);
   telegraphs.push({
     type:'laserWarn', angle:a, t:0, dur:0.8,
     onDone(){
-      playProjectileSfx('laserFire');
       telegraphs.push({ type:'laserActive', angle:a, t:0, dur:1.0, rotSpeed: rand(-0.5,0.5), halfWidth:0.16 });
     }
   });
 }
 
 function spawnWave(){
-  playProjectileSfx('wave');
   const sm = speedMult();
   const targ = playerPredicted(0.3);
   const baseAngle = Math.atan2(targ.y-CY, targ.x-CX);
@@ -1977,7 +2447,6 @@ function spawnWave(){
 }
 
 function spawnSpiral(){
-  playProjectileSfx('spiral');
   const sm = speedMult();
   const a0 = rand(0,Math.PI*2);
   const dir = Math.random()<0.5 ? 1 : -1;
@@ -1995,7 +2464,6 @@ function spawnSpiral(){
 // distinct from the continuous weighted-random spawner, which is briefly suppressed
 // while one of these plays out so the gap reads clearly.
 function patternCrossGate(){
-  playProjectileSfx('ring');
   const count = 16;
   const gapCenterAngle = Math.atan2(player.y-CY, player.x-CX);
   const gapHalf = 0.5;
@@ -2014,7 +2482,6 @@ function patternCrossGate(){
 }
 
 function patternPincerFans(){
-  playProjectileSfx('fan');
   const speed = R*0.5*speedMult();
   const sr = spawnR();
   const baseA = rand(0,Math.PI*2);
@@ -2033,13 +2500,11 @@ function patternPincerFans(){
 }
 
 function patternSniperCross(){
-  playProjectileSfx('sniperWarn');
   const dirs = [0, Math.PI/2, Math.PI, -Math.PI/2];
   for(const a of dirs){
     telegraphs.push({
       type:'sniperWarn', angle:a, t:0, dur:0.7,
       onDone(){
-        playProjectileSfx('sniperFire');
         const speed = R*1.7*speedMult();
         const sr = spawnR();
         projectiles.push(mkProj({
@@ -2053,7 +2518,6 @@ function patternSniperCross(){
 }
 
 function patternSpiralBloom(){
-  playProjectileSfx('spiral');
   const arms = 5;
   const dir = Math.random()<0.5 ? 1 : -1;
   const sr = spawnR();
@@ -2068,7 +2532,6 @@ function patternSpiralBloom(){
 }
 
 function patternWaveCorridor(){
-  playProjectileSfx('wave');
   const speed = R*0.38*speedMult();
   const baseAngle = rand(0,Math.PI*2);
   const sr = spawnR();
@@ -2164,7 +2627,6 @@ function onJumpPressed(mx, my){
   // near-permanent invulnerability
   if(player.jumpCharges<=0 || player.dashT>0) return;
   if(tutorialActive) tutFlags.jump = true;
-  playAbilitySfx('jump');
   player.jumpDurActive = jumpDurMax();
   player.jumpT = player.jumpDurActive;
   // launch velocity only — jumpZ (current visual height) is left alone, so triggering a
@@ -2178,7 +2640,6 @@ function onJumpPressed(mx, my){
 
 function onAbility1Pressed(){ // Wall — only once unlocked via an upgrade
   if(!player.wallUnlocked || player.wallCd>0) return;
-  playAbilitySfx('wall');
   player.wallT = ABILITY.WALL_DUR;
   player.wallCd = ABILITY.WALL_CD;
   player.wallAngle = Math.atan2(player.y-CY, player.x-CX);
@@ -2192,11 +2653,9 @@ function onAbility2Pressed(){ // Slow-Mo — press to toggle, not hold; once on 
   // the way to empty on its own. Press again to cancel it early.
   if(player.slowActive){
     player.slowActive = false;
-    playAbilitySfx('slowOff');
   } else if(player.slowEnergy > ABILITY.SLOW_MIN_TO_USE){
     player.slowActive = true;
     if(tutorialActive) tutFlags.slow = true;
-    playAbilitySfx('slowOn');
   }
 }
 
@@ -2221,7 +2680,6 @@ function onAbility3Pressed(mx, my){ // Dash — forbidden mid-hop, so jump+dash 
   // into near-permanent invulnerability
   if(player.dashCd>0 || player.jumpT>0) return;
   if(tutorialActive) tutFlags.dash = true;
-  playAbilitySfx('dash');
   let dx=mx, dy=my;
   if(Math.hypot(mx,my)===0){ dx=Math.cos(player.facing); dy=Math.sin(player.facing); }
   const dl = Math.hypot(dx,dy)||1;
@@ -2239,7 +2697,6 @@ function onAbility4Pressed(){ // Nova — only once unlocked via an upgrade
 
 function onAbility5Pressed(){ // Decoy — only once unlocked via an upgrade
   if(!player.decoyUnlocked || player.decoyCd>0) return;
-  playAbilitySfx('decoy');
   player.decoyCd = ABILITY.DECOY_CD;
   player.decoyT = ABILITY.DECOY_DUR;
   player.decoyX = player.x; player.decoyY = player.y;
@@ -2600,10 +3057,8 @@ function consumeShieldOrFail(){
     shakeT = 0.3; shakeMag = 14; shakeMax = shakeT;
     flashHit(0.6, '#5be3ff');
     spawnBurstParticles(player.x, player.y, '#5be3ff', 20);
-    playAbilitySfx('shieldBlock');
     return;
   }
-  playAbilitySfx('hit');
   failLevel();
 }
 
@@ -2632,7 +3087,6 @@ function checkSevers(){
 }
 
 function registerSever(p){
-  playSeverSfx();
   severCount++;
   p.dead = true; // cutting through a shot's tail destroys it — this is baseline now, not an upgrade perk
   spawnBurstParticles(p.x,p.y,'#bdfff0',6);
@@ -2659,7 +3113,6 @@ function damageCore(amount){
 
 // Pulse Nova upgrade: an instant burst that destroys everything near the player
 function triggerNova(){
-  playAbilitySfx('nova');
   const radius = player.r*ABILITY.NOVA_RADIUS_MULT;
   let kills = 0;
   for(const p of projectiles){
