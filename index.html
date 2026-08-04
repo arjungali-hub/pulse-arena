@@ -1897,15 +1897,18 @@ const MUSIC_HOST = {
   active(){ return state==='playing' || state==='exploding' || state==='levelup'; },
   time(){ return elapsed; },
   trackId(){
-    // multiplayer picks fixed tracks from the same soundtrack: the long-form endless piece
-    // for the coreless survival modes, and a driving level track for the sever/core modes
-    if(multi()){
-      if(pvpMode==='survival' || coopMode==='survival') return 'endless';
-      return coopMode==='takedown' ? 20 : 16; // co-op boss = COLLAPSE, PvP race = VENOM
-    }
+    // each multiplayer mode has its own dedicated track (see GAMEMODE_TRACKS)
+    if(pvp) return pvpMode==='race' ? 'pvpRace' : 'pvpSurvival';
+    if(coop) return coopMode==='takedown' ? 'coopTakedown' : 'coopSurvival';
     return gameMode==='endless' ? 'endless' : currentLevel;
   },
-  intensity(){ return corePhase>=2 ? 1 : 0; }
+  intensity(){
+    // PvP Race never lets up; Co-op Takedown climbs with damage dealt to the shared core so
+    // it peaks at the kill; everything else ramps at the mid-run phase change like Endless
+    if(pvp && pvpMode==='race') return 1;
+    if(coop && coopMode==='takedown') return Math.max(0, Math.min(1, 1 - coreHP/coreMaxHP));
+    return corePhase>=2 ? 1 : 0;
+  }
 };
 
 let audioCtx = null;
@@ -2426,14 +2429,251 @@ const ENDLESS_TRACK = {
   ]
 };
 
-function endlessSectionAt(bar){
-  const S = ENDLESS_TRACK.sections;
+function sectionAt(track, bar){
+  const S = track.sections;
   for(let i=S.length-1;i>=0;i--) if(bar >= S[i].at) return S[i];
   return S[0];
 }
 
+// ================= GAMEMODE SOUNDTRACK =================
+// Four long-form tracks for the new modes. Same engine, same 122.231 BPM, same
+// one-bar-per-core-pulse grid as the twenty level tracks and Endless — these sit alongside
+// that album, not replace it. They use the ENDLESS_TRACK `sections` shape (not a 16-bar loop)
+// so they develop over a run. PvP Survival = competitive call-and-answer that escalates like
+// Endless; PvP Race = relentless, no breakdown, gears up a whole tone at the halfway mark;
+// Co-op Survival = friendly dorian with borrowed major chords and a real breather; Co-op
+// Takedown = heroic, sustained lead over busy drums on a VI-VII-i cadence.
+
+// ---------- 1. PVP SURVIVAL ----------
+const PVP_SURVIVAL_TRACK = {
+  name:'MIRROR MATCH', mode:'PvP Survival', endless:true, bars:80,
+  blurb:'Two voices circling each other. Escalates the longer nobody dies.',
+  sections:[
+    { at:0,  len:16, label:'STAGGER', root:'D', oct:2, scale:'aeolian',
+      prog:[0,5,6,4],
+      kick:'x...x...x...x...', snare:'....x.......x...', hat:'..x...x...x...x.', hatVol:0.13,
+      bass:'1...1...3...3...', bassVoice:'sub',
+      arp:'..x...x...x...x.', shape:[0,1,2,1], arpVoice:'pluck', arpOct:2,
+      lead:['5---6---8---6---','9---8-----------','1---2---4---2---','5---4-----------'],
+      leadVoice:'tri', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:16, len:16, label:'TRADE', root:'D', oct:2, scale:'dorian',
+      prog:[0,6,3,0],
+      kick:'x...x...x...x..x', snare:'....x.......x...', hat:'x.x.x.x.x.x.x.x.', hatVol:0.14,
+      bass:'1...1.3.1...2...', bassVoice:'saw',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,1,3], arpVoice:'pluck', arpOct:2,
+      lead:['5-6-8---6---5---','1-2-4---2---1---','9---8---6---5---','5---4---2---1---'],
+      leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:32, len:16, label:'PRESSURE', root:'D', oct:2, scale:'aeolian',
+      prog:[0,5,3,6], clapSnare:true,
+      kick:'x...x..xx...x...', snare:'....x.......x...', hat:'x.xxx.xxx.xxx.xx', hatVol:0.14,
+      bass:'1.1.1.3.1.1.4.4.', bassVoice:'reese',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,2], arpVoice:'saw', arpOct:2,
+      lead:['8-7-6-5-6---8---','3-2-1---2---4---','8---9---8-7-6---','4---5---4-3-2---'],
+      leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:48, len:8,  label:'BUILD', root:'D', oct:2, scale:'aeolian', build:true,
+      prog:[3,3,4,4],
+      kick:'x...x...x...x...', snare:'................', hat:'................', hatVol:0.12,
+      bass:'1...1...1...1...', bassVoice:'reese',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,6], arpVoice:'saw', arpOct:2,
+      lead:['5---6---8---6---','9---8-----------','1---2---4---2---','5---4-----------'],
+      leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:0,pad:1} },
+
+    { at:56, len:16, label:'SUDDEN DEATH', root:'D', oct:2, scale:'harm',
+      prog:[0,3,4,0], clapSnare:true,
+      kick:'x..xx..xx...x..x', snare:'....x...x...x..x', hat:'xxxxxxxxxxxxxxxx', hatVol:0.12,
+      bass:'1.1.1.1.3.3.3.3.', bassVoice:'reese',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,5], arpVoice:'saw', arpOct:2,
+      lead:['1---2---3---5---','7---8-----------','8---7---5---3---','2---7---1-------'],
+      leadVoice:'square', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:72, len:8,  label:'RESET', root:'D', oct:2, scale:'harm', build:true,
+      prog:[3,3,4,4],
+      kick:'x...x...x...x...', snare:'................', hat:'................', hatVol:0.12,
+      bass:'1...1...1...1...', bassVoice:'reese',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,6], arpVoice:'saw', arpOct:2,
+      lead:['1---2---3---5---','7---8-----------','8---7---5---3---','2---7---1-------'],
+      leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:0,pad:1} }
+  ]
+};
+
+// ---------- 2. PVP RACE ----------
+const PVP_RACE_TRACK = {
+  name:'DEAD HEAT', mode:'PvP Race', endless:true, bars:48,
+  blurb:'No breakdown, no rest. Gear-changes up a whole tone at the halfway mark.',
+  sections:[
+    { at:0,  len:12, label:'LAUNCH', root:'E', oct:2, scale:'phrygian',
+      prog:[0,1,0,6], clapSnare:true,
+      kick:'x..xx..xx..xx..x', snare:'....x.......x...', hat:'xxxxxxxxxxxxxxxx', hatVol:0.10,
+      bass:'1..11..11..13..3', bassVoice:'reese',
+      arp:'x.x.x.x.x.x.x.x.', shape:[1,0,2,0], arpVoice:'saw', arpOct:2,
+      lead:['2-1-2-1-5---4---','2---1-----------','5-4-5-4-8---5---','4---2---1-------'],
+      leadVoice:'square', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:12, len:12, label:'SLIPSTREAM', root:'E', oct:2, scale:'aeolian',
+      prog:[0,5,6,4], clapSnare:true,
+      kick:'x...x...x...x.x.', snare:'....x.......x...', hat:'x.xxx.xxx.xxx.xx', hatVol:0.12,
+      bass:'1.1.1.3.1.1.2.2.', bassVoice:'reese',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,2], arpVoice:'saw', arpOct:2,
+      lead:['5-6-8-6-5-4-3-2-','1---3---5---6---','8-9-8-6-5-6-8---','6---5---3---2---'],
+      leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:24, len:12, label:'OVERTAKE', root:'F#', oct:2, scale:'phrygian',
+      prog:[0,1,4,0], clapSnare:true,
+      kick:'x..xx..xx..xx..x', snare:'....x...x...x..x', hat:'xxxxxxxxxxxxxxxx', hatVol:0.11,
+      bass:'1..11..11..13..3', bassVoice:'reese',
+      arp:'x.x.x.x.x.x.x.x.', shape:[1,0,2,4], arpVoice:'saw', arpOct:2,
+      lead:['2-1-2---5-4-5---','8-7-8---5-4-2---','2-1-2---9-8-9---','5-4-2---1-------'],
+      leadVoice:'square', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:36, len:8,  label:'FINAL LAP', root:'F#', oct:2, scale:'harm',
+      prog:[0,3,4,0], clapSnare:true,
+      kick:'x..xx..xx...x..x', snare:'....x...x...x..x', hat:'xxxxxxxxxxxxxxxx', hatVol:0.12,
+      bass:'1.1.1.1.3.3.3.3.', bassVoice:'reese',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,5], arpVoice:'saw', arpOct:2,
+      lead:['8-9-8-7-8---9---','5-7-8---7-5-3---','1-2-3-5-7---8---','9-8-7---8-------'],
+      leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:44, len:4,  label:'REDLINE', root:'F#', oct:2, scale:'harm', build:true,
+      prog:[3,3,4,4],
+      kick:'x...x...x...x...', snare:'................', hat:'................', hatVol:0.12,
+      bass:'1...1...1...1...', bassVoice:'reese',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,6], arpVoice:'saw', arpOct:2,
+      lead:['8-9-8-7-8---9---','5-7-8---7-5-3---','1-2-3-5-7---8---','9-8-7---8-------'],
+      leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:0,pad:1} }
+  ]
+};
+
+// ---------- 3. CO-OP SURVIVAL ----------
+const COOP_SURVIVAL_TRACK = {
+  name:'HOLD THE LINE', mode:'Co-op Survival', endless:true, bars:80,
+  blurb:'Endless, warmed up. Major chords borrowed from inside the key, and a real breather.',
+  sections:[
+    { at:0,  len:16, label:'FIRST WATCH', root:'A', oct:2, scale:'dorian',
+      prog:[0,6,3,0],
+      kick:'x...x...x...x...', snare:'....x.......x...', hat:'..x...x...x...x.', hatVol:0.12,
+      bass:'1...1...3...3...', bassVoice:'sub',
+      arp:'..x...x...x...x.', shape:[0,1,2,4], arpVoice:'bell', arpOct:2,
+      lead:['3---5---6---5---','3---2---1-------','5---6---8---6---','5---3---2-------'],
+      leadVoice:'tri', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:16, len:16, label:'STEADY', root:'A', oct:2, scale:'dorian',
+      prog:[2,3,6,2],
+      kick:'x...x...x...x...', snare:'....x.......x...', hat:'x.x.x.x.x.x.x.x.', hatVol:0.12,
+      bass:'1...1...3...3...', bassVoice:'saw',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,1,3], arpVoice:'bell', arpOct:2,
+      lead:['1---2---3---2---','6---5---3-------','5---6---8---9---','8---6---5-------'],
+      leadVoice:'tri', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:32, len:16, label:'PUSH', root:'A', oct:2, scale:'aeolian',
+      prog:[0,5,2,6],
+      kick:'x...x...x...x..x', snare:'....x.......x...', hat:'x.x.x.x.x.x.oxo.', hatVol:0.13,
+      bass:'1.1.1.3.1.1.2.2.', bassVoice:'saw',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,2], arpVoice:'pluck', arpOct:2,
+      lead:['8---8-7-5---6---','5---3---2-------','1---3---5---6---','5---3---2-------'],
+      leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:48, len:8,  label:'BREATHE', root:'A', oct:2, scale:'dorian',
+      prog:[5,2,3,6],
+      kick:'x...............', snare:'................', hat:'....x.......x...', hatVol:0.09,
+      bass:'1...............', bassVoice:'sub',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,2], arpVoice:'bell', arpOct:3,
+      lead:['5---6---8-------','6---5---3-------','2---3---5---6---','5---------------'],
+      leadVoice:'tri', leadOct:2, layers:{drums:0,bass:0,arp:1,lead:1,pad:1} },
+
+    { at:56, len:8,  label:'BUILD', root:'A', oct:2, scale:'dorian', build:true,
+      prog:[3,3,6,6],
+      kick:'x...x...x...x...', snare:'................', hat:'................', hatVol:0.12,
+      bass:'1...1...1...1...', bassVoice:'saw',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,6], arpVoice:'saw', arpOct:2,
+      lead:['5---6---8-------','6---5---3-------','2---3---5---6---','5---------------'],
+      leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:0,pad:1} },
+
+    { at:64, len:8,  label:'SECOND WIND', root:'A', oct:2, scale:'dorian',
+      prog:[2,3,6,2],
+      kick:'x...x...x...x..x', snare:'....x.......x...', hat:'x.xxx.x.x.xxx.x.', hatVol:0.13,
+      bass:'1.1.1.3.1.1.2.2.', bassVoice:'saw',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,2], arpVoice:'bell', arpOct:2,
+      lead:['5---6---8---9---','8---6---5-------','3---5---6---8---','6---5---3-------'],
+      leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:72, len:8,  label:'BUILD II', root:'A', oct:2, scale:'dorian', build:true,
+      prog:[3,3,6,6],
+      kick:'x...x...x...x...', snare:'................', hat:'................', hatVol:0.12,
+      bass:'1...1...1...1...', bassVoice:'saw',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,6], arpVoice:'saw', arpOct:2,
+      lead:['5---6---8---9---','8---6---5-------','3---5---6---8---','6---5---3-------'],
+      leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:0,pad:1} }
+  ]
+};
+
+// ---------- 4. CO-OP TAKEDOWN ----------
+const COOP_TAKEDOWN_TRACK = {
+  name:'TOGETHER, THEN', mode:'Co-op Takedown', endless:true, bars:64,
+  blurb:'Heroic rather than aggressive: sustained lead over busy drums, VI-VII-i throughout.',
+  sections:[
+    { at:0,  len:16, label:'CHARGE', root:'G', oct:2, scale:'aeolian',
+      prog:[5,6,0,0], clapSnare:true,
+      kick:'x...x...x...x..x', snare:'....x.......x...', hat:'x.xxx.x.x.xxx.x.', hatVol:0.14,
+      bass:'1.1.1.3.1.1.2.2.', bassVoice:'saw',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,2], arpVoice:'saw', arpOct:2,
+      lead:['5-------6---8---','9-------8-------','6---5---6---8---','5---------------'],
+      leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:16, len:16, label:'PUSH', root:'G', oct:2, scale:'dorian',
+      prog:[0,3,6,0], clapSnare:true,
+      kick:'x...x...x...x.x.', snare:'....x.......x...', hat:'x.xxx.xxx.xxx.xx', hatVol:0.14,
+      bass:'1.1.1.3.1.1.4.4.', bassVoice:'saw',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,3], arpVoice:'saw', arpOct:2,
+      lead:['8---9---8---6---','5---6---5-------','3---5---6---8---','9-------8-------'],
+      leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:32, len:8,  label:'BREAK', root:'G', oct:2, scale:'dorian',
+      prog:[5,2,3,6],
+      kick:'x.......x.......', snare:'........x.......', hat:'..x...x...x...x.', hatVol:0.11,
+      bass:'................', bassVoice:'sub',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,2], arpVoice:'bell', arpOct:3,
+      lead:['5---6---8-------','6---5---3-------','2---3---5---6---','8---------------'],
+      leadVoice:'tri', leadOct:2, layers:{drums:1,bass:0,arp:1,lead:1,pad:1} },
+
+    { at:40, len:8,  label:'BUILD', root:'G', oct:2, scale:'aeolian', build:true,
+      prog:[5,5,6,6],
+      kick:'x...x...x...x...', snare:'................', hat:'................', hatVol:0.12,
+      bass:'1...1...1...1...', bassVoice:'saw',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,6], arpVoice:'saw', arpOct:2,
+      lead:['5-------6---8---','9-------8-------','6---5---6---8---','5---------------'],
+      leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:0,pad:1} },
+
+    { at:48, len:12, label:'SURGE', root:'G', oct:2, scale:'aeolian',
+      prog:[5,6,0,3], clapSnare:true,
+      kick:'x..xx..xx...x..x', snare:'....x...x...x..x', hat:'xxxxxxxxxxxxxxxx', hatVol:0.12,
+      bass:'1.1.1.1.3.3.3.3.', bassVoice:'reese',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,5], arpVoice:'saw', arpOct:2,
+      lead:['9-------8---9---','8---6---5-------','6---8---9---8---','6---5-----------'],
+      leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:1,pad:1} },
+
+    { at:60, len:4,  label:'FINISH', root:'G', oct:2, scale:'aeolian', build:true,
+      prog:[5,5,6,6],
+      kick:'x...x...x...x...', snare:'................', hat:'................', hatVol:0.12,
+      bass:'1...1...1...1...', bassVoice:'reese',
+      arp:'x.x.x.x.x.x.x.x.', shape:[0,2,4,6], arpVoice:'saw', arpOct:2,
+      lead:['9-------8---9---','8---6---5-------','6---8---9---8---','6---5-----------'],
+      leadVoice:'saw', leadOct:2, layers:{drums:1,bass:1,arp:1,lead:0,pad:1} }
+  ]
+};
+
+const GAMEMODE_TRACKS = {
+  pvpSurvival:  PVP_SURVIVAL_TRACK,
+  pvpRace:      PVP_RACE_TRACK,
+  coopSurvival: COOP_SURVIVAL_TRACK,
+  coopTakedown: COOP_TAKEDOWN_TRACK
+};
+
 // ---------- sequencer ----------
 function trackFor(id){
+  if(GAMEMODE_TRACKS[id]) return GAMEMODE_TRACKS[id]; // the four multiplayer-mode tracks
   if(id === 'endless') return ENDLESS_TRACK;
   const n = Math.max(1, Math.min(LEVEL_TRACKS.length, id|0));
   return LEVEL_TRACKS[n-1];
@@ -2445,9 +2685,9 @@ function voicingFor(track, bar, s, intens){
   const hot = intens >= 0.5;
   if(track.endless){
     const loopBar = bar % track.bars;
-    const sec = endlessSectionAt(loopBar);
+    const sec = sectionAt(track, loopBar);
     const barInSec = loopBar - sec.at;
-    const prev = endlessSectionAt((sec.at + track.bars - 1) % track.bars);
+    const prev = sectionAt(track, (sec.at + track.bars - 1) % track.bars);
     const V = Object.assign({}, sec);
     V.chordDeg = sec.prog[barInSec % 4];
     V.leadBar = sec.layers.lead ? sec.lead[barInSec % 4] : null;
