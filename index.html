@@ -1894,10 +1894,17 @@ const MUSIC_VOL     = 1.15;                       // master, pre-limiter
 // the game drives the music through this host: which track, how far in, how hot, and whether
 // a run is actually happening (silent at the menu / result screens)
 const MUSIC_HOST = {
-  // multiplayer (PvP + co-op) has no soundtrack yet — those modes stay silent for now
-  active(){ return !pvp && !coop && (state==='playing' || state==='exploding' || state==='levelup'); },
+  active(){ return state==='playing' || state==='exploding' || state==='levelup'; },
   time(){ return elapsed; },
-  trackId(){ return gameMode==='endless' ? 'endless' : currentLevel; },
+  trackId(){
+    // multiplayer picks fixed tracks from the same soundtrack: the long-form endless piece
+    // for the coreless survival modes, and a driving level track for the sever/core modes
+    if(multi()){
+      if(pvpMode==='survival' || coopMode==='survival') return 'endless';
+      return coopMode==='takedown' ? 20 : 16; // co-op boss = COLLAPSE, PvP race = VENOM
+    }
+    return gameMode==='endless' ? 'endless' : currentLevel;
+  },
   intensity(){ return corePhase>=2 ? 1 : 0; }
 };
 
