@@ -488,7 +488,7 @@
   <div class="pvp-ctrl-side left hidden" id="pvpCtrlP1">
     <div class="pcs-who">P1</div>
     <div class="pcs-row"><span>Move</span><b>WASD</b></div>
-    <div class="pcs-row"><span>Jump</span><b>Space</b></div>
+    <div class="pcs-row"><span>Jump</span><b>F</b></div>
     <div class="pcs-row"><span>Dash</span><b>Shift</b></div>
   </div>
   <div class="pvp-ctrl-side right hidden" id="pvpCtrlP2">
@@ -547,7 +547,7 @@
     <div class="pvp-controls">
       <div class="pvp-ctrl-col p1">
         <div class="who">PLAYER 1</div>
-        Move <b>W A S D</b><br>Jump <b>Space</b><br>Dash <b>Left Shift</b>
+        Move <b>W A S D</b><br>Jump <b>F</b><br>Dash <b>Left Shift</b>
       </div>
       <div class="pvp-ctrl-col p2">
         <div class="who">PLAYER 2</div>
@@ -575,7 +575,7 @@
     <div class="pvp-controls">
       <div class="pvp-ctrl-col p1">
         <div class="who">PLAYER 1</div>
-        Move <b>W A S D</b><br>Jump <b>Space</b><br>Dash <b>Left Shift</b>
+        Move <b>W A S D</b><br>Jump <b>F</b><br>Dash <b>Left Shift</b>
       </div>
       <div class="pvp-ctrl-col p2">
         <div class="who">PLAYER 2</div>
@@ -763,11 +763,13 @@ function consumeActionPress(action){ for(const k of (activeKeybinds[action]||[])
 // ---------- PvP: two players on one keyboard ----------
 // fixed control sets, one per player. Every action name the single-player kit checks must be
 // present (unused ones bound to nothing) so isActionPressed('ability1') etc. never trip on an
-// undefined bind. Multiplayer players get only Move, Jump (space/`/`) and Dash (shift/`.`) —
-// no Slow-Mo (ability2) or the unlockable Q/F/R abilities.
+// undefined bind. Multiplayer players get only Move, Jump (F / `/`) and Dash (Shift / `.`) —
+// no Slow-Mo (ability2) or the unlockable Q/F/R abilities. Neither player gets Space for jump:
+// it's an oversized, central, too-easy key — an unfair edge, and physically in the way of the
+// other player sharing the keyboard.
 const PVP_KB_P1 = {
   moveUp:['w'], moveDown:['s'], moveLeft:['a'], moveRight:['d'],
-  jump:[' '], ability3:['shift'],
+  jump:['f'], ability3:['shift'],
   ability1:[], ability2:[], ability4:[], ability5:[]
 };
 const PVP_KB_P2 = {
@@ -775,9 +777,9 @@ const PVP_KB_P2 = {
   jump:['/'], ability3:['.'],
   ability1:[], ability2:[], ability4:[], ability5:[]
 };
-// the physical keys multiplayer owns — used to swallow browser defaults (quick-find on '/',
-// scroll on arrows/space) while a 2-player match is live
-const PVP_KEYS = new Set(['w','a','s','d',' ','shift','arrowup','arrowdown','arrowleft','arrowright','/','.']);
+// the physical keys multiplayer owns — used to swallow browser defaults (quick-find on '/')
+// while a 2-player match is live
+const PVP_KEYS = new Set(['w','a','s','d','f','shift','arrowup','arrowdown','arrowleft','arrowright','/','.']);
 
 // ---------- rebinding UI ----------
 // human-readable label for any physical key string used above
@@ -2666,11 +2668,14 @@ function buildUpgradePool(){
       desc:'+30% dash distance. No stack limit.',
       eligible:()=> true,
       apply:()=>{ player.up.dashPower = (player.up.dashPower||0)+1; } },
-    { id:'respawnFast', name:'Rebound',
+    // the respawn pair only matters where you actually respawn, so both are flagged out of
+    // single-player entirely; the multiplayer branch below re-includes them by id, but only
+    // in the respawn modes (PvP Race, co-op)
+    { id:'respawnFast', name:'Rebound', endlessEligible:false, levelsEligible:false,
       desc:()=> '-'+Math.round(Math.min(((player.up.respawnFast||0)+1)*0.2,0.6)*100)+'% respawn delay after going down.',
       eligible:()=> (player.up.respawnFast||0) < 3,
       apply:()=>{ player.up.respawnFast = (player.up.respawnFast||0)+1; } },
-    { id:'respawnGuard', name:'Guardian',
+    { id:'respawnGuard', name:'Guardian', endlessEligible:false, levelsEligible:false,
       desc:()=> '+'+((player.up.respawnGuard||0)*0.7+0.7).toFixed(1)+'s invulnerability when you respawn. No stack limit.',
       eligible:()=> true,
       apply:()=>{ player.up.respawnGuard = (player.up.respawnGuard||0)+1; } }
@@ -4382,7 +4387,9 @@ function updateHud(){
     updatePvpHud();
     return;
   }
-  hudStyle('scoreBlockDisp', scoreLabel.parentElement, 'display', '');
+  // hide the top-left readout off the menu/level-select, so it doesn't bleed faintly through
+  // the semi-transparent menu overlay when no run is in progress
+  hudStyle('scoreBlockDisp', scoreLabel.parentElement, 'display', (state==='menu'||state==='levelselect') ? 'none' : '');
   if(gameMode==='endless'){
     hudText('scoreLabel', scoreLabel, 'Score');
     hudText('curLevel', curLevelVal, String(Math.floor(score)));
