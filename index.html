@@ -325,6 +325,9 @@
   .mode-card-title{ font-size:30px; font-weight:800; margin-bottom:8px; }
   .mode-card.levels .mode-card-title{ color:var(--cyan); text-shadow:0 0 14px rgba(91,227,255,.5); }
   .mode-card.endless .mode-card-title{ color:var(--magenta); text-shadow:0 0 14px rgba(255,91,216,.5); }
+  .mode-card.pvp, .mode-card.coop{ width:100%; max-width:702px; }
+  .mode-card.pvp .mode-card-title{ color:var(--magenta); text-shadow:0 0 14px rgba(255,91,216,.5); }
+  .mode-card.coop .mode-card-title{ color:#6bffb0; text-shadow:0 0 14px rgba(107,255,176,.5); }
   .mode-card-desc{ font-size:14.5px; color:var(--dim); line-height:1.45; margin-bottom:14px; }
   .mode-card-features{ margin:0; padding-left:20px; font-size:13px; color:var(--dim); line-height:1.8; }
 
@@ -522,12 +525,12 @@
           <li>Chase a new high score</li>
         </ul>
       </div>
-      <div class="mode-card pvp" id="pvpBtn" style="width:100%; max-width:702px;">
-        <div class="mode-card-title" style="color:var(--magenta); text-shadow:0 0 14px rgba(255,91,216,.5);">PvP · Local 2-Player</div>
+      <div class="mode-card pvp" id="pvpBtn">
+        <div class="mode-card-title">PvP · Local 2-Player</div>
         <div class="mode-card-desc">Two players, one keyboard. Survival — last one standing wins. Race — split the core and be first to destroy your half.</div>
       </div>
-      <div class="mode-card pvp" id="coopBtn" style="width:100%; max-width:702px;">
-        <div class="mode-card-title" style="color:#6bffb0; text-shadow:0 0 14px rgba(107,255,176,.5);">Co-op · Local 2-Player</div>
+      <div class="mode-card coop" id="coopBtn">
+        <div class="mode-card-title">Co-op · Local 2-Player</div>
         <div class="mode-card-desc">Two players, one keyboard, same team. Survival — endure together. Takedown — jointly destroy one shared core. Fall together and it's over.</div>
       </div>
     </div>
@@ -715,6 +718,7 @@ function resize(){
 }
 window.addEventListener('resize', ()=>{
   resize();
+  glowSpriteCache.clear(); // R changed -> old-radius glow sprites are stale; don't let them accumulate
   if(state==='playing' && !paused) setPaused(true); // mid-run resize can invalidate in-flight positions; pause rather than risk it
 });
 resize();
@@ -866,7 +870,7 @@ window.addEventListener('keydown', (e)=>{
   keys[k] = true;
   // during a coach message beat, Enter advances the walkthrough (Space stays a game key)
   if(tutorialActive && k==='enter' && !TUT_STEPS[tutorialStep].wait){ advanceTutorial(); return; }
-  if(k==='escape' && state==='playing' && !tutorialActive){ setPaused(!paused); return; }
+  if(k==='escape' && state==='playing' && !tutorialActive && !multiUpgradeActive){ setPaused(!paused); return; }
   if(state==='levelup'){
     if(k==='z') choosePendingUpgrade(0);
     else if(k==='x') choosePendingUpgrade(1);
@@ -876,8 +880,8 @@ window.addEventListener('keydown', (e)=>{
     else if(k==='r' && (!levelWon || canRetryWin)){ if(gameMode==='endless') startEndless(); else startLevel(currentLevel); }
     else if(k===' ' || k==='enter'){
       if(gameMode==='endless') startEndless();
-      else if(levelWon) startLevel(currentLevel+1);
-      else startLevel(currentLevel);
+      else if(levelWon && currentLevel < MAX_LEVEL) startLevel(currentLevel+1); // no phantom level 21 past the finale
+      else if(!levelWon) startLevel(currentLevel);
     }
   }
 });
@@ -888,6 +892,10 @@ window.addEventListener('keyup', (e)=>{
 window.addEventListener('blur', ()=>{
   for(const k in keys) keys[k]=false;
   for(const k in pressedEdge) pressedEdge[k]=false;
+  // alt-tabbing away shouldn't leave the sim running at throttled rAF — you could die
+  // off-screen. Pause a live run (but not the tutorial or an open upgrade pick, which are
+  // already frozen and have no death risk, and whose overlays would just stack awkwardly).
+  if(state==='playing' && !paused && !tutorialActive && !multiUpgradeActive) setPaused(true);
 });
 
 // mouse buttons feed the same keys/pressedEdge maps as keyboard keys, as virtual keys
@@ -907,7 +915,7 @@ window.addEventListener('mousedown', (e)=>{
   if(listeningForAction){ e.preventDefault(); captureBinding('mouse'+e.button); }
 }, true);
 window.addEventListener('auxclick', (e)=>{ if(listeningForAction) e.preventDefault(); }, true);
-window.addEventListener('auxclick', (e)=> e.preventDefault()); // some browsers fire this instead of mousedown for middle-click
+canvas.addEventListener('auxclick', (e)=> e.preventDefault()); // some browsers fire this instead of mousedown for middle-click; scope to the canvas so it doesn't swallow middle-clicks page-wide
 
 // ---------- utility ----------
 function dist(x1,y1,x2,y2){ const dx=x2-x1, dy=y2-y1; return Math.sqrt(dx*dx+dy*dy); }
@@ -971,7 +979,7 @@ let testMode = false;
 const UPGRADE_INTERVAL = 20;
 let nextUpgradeAt = UPGRADE_INTERVAL;
 
-let state = 'menu'; // 'menu' | 'playing' | 'exploding' | 'levelup' | 'gameover'
+let state = 'menu'; // 'menu' | 'levelselect' | 'playing' | 'exploding' | 'levelup' | 'gameover'
 let gameMode = 'levels'; // 'levels' (destroy the core to win) | 'endless' (survive for score)
 let paused = false; // only meaningful while state==='playing'
 let elapsed = 0;
@@ -1091,44 +1099,47 @@ function slimHitboxCut(){ return gameMode==='levels' ? 0.16 : 0.12; }
 
 function jumpDurMax(){ return ABILITY.JUMP_DUR; }
 const JUMP_CD_FLOOR = 0.5, DASH_CD_FLOOR = 0.5; // hard minimums so stacked reflex upgrades can never produce near-permanent i-frames
-function jumpCdMax(){
-  const raw = ABILITY.JUMP_CD * (1 - player.up.reflex*reflexCdCut());
+// the per-player stat helpers default to the current global `player` but accept an explicit
+// one, so callers acting on a specific player (resetPlayerObj, the PvP HUD) don't have to
+// swap the global pointer around — see the note on that swap being the root of the co-op
+// aiming bug
+function jumpCdMax(p = player){
+  const raw = ABILITY.JUMP_CD * (1 - p.up.reflex*reflexCdCut());
   // hard invariant: there must always be some real downtime after a hop ends before the
   // next one can start, no matter how upgrades combine — otherwise jump becomes permanent
   // ground-attack immunity instead of a committed dodge
   return Math.max(raw, jumpDurMax() + 0.15, JUMP_CD_FLOOR);
 }
-function jumpChargeMax(){ return 1 + (player.up.extraJump||0); }
+function jumpChargeMax(p = player){ return 1 + (p.up.extraJump||0); }
 // physics constants for the visual hop, solved so a single unchained jump's flight time
 // matches jumpDurMax() and its peak visual height is exactly 1 (see drawPlayerShip)
 function jumpGravity(){ const T = jumpDurMax(); return 8/(T*T); }
 function jumpLaunchVZ(){ return jumpGravity()*jumpDurMax()/2; }
-function dashCdMax(){ return Math.max(ABILITY.DASH_CD * (1 - player.up.reflex*reflexCdCut()), DASH_CD_FLOOR); }
+function dashCdMax(p = player){ return Math.max(ABILITY.DASH_CD * (1 - p.up.reflex*reflexCdCut()), DASH_CD_FLOOR); }
 // Afterburner (dashPower) stretches the dash — it lasts longer, so it covers more ground
 function dashDurMax(){ return ABILITY.DASH_DUR * (1 + (player.up.dashPower||0)*0.3); }
-function slowEnergyMax(){ return 100 + (player.up.slowMaxBoost||0)*30; } // Overcharge (endless-only)
+function slowEnergyMax(p = player){ return 100 + (p.up.slowMaxBoost||0)*30; } // Overcharge (endless-only)
 function slowRegenRate(){ return ABILITY.SLOW_REGEN; }
 // Conservation and Slim Profile have no stack limit, so their cut fractions are clamped well
 // short of 1 — otherwise enough stacks would drive drain rate or hitbox size to zero or negative
 function slowDrainRate(){ return ABILITY.SLOW_DRAIN * (1 - Math.min((player.up.slowEfficiency||0)*0.15, 0.85)); } // Conservation (endless-only)
 function moveSpeedMult(){ return 1 + player.up.legs*legsSpeedBonus(); }
-function updatePlayerRadius(){ player.r = playerBaseR() * (1 - Math.min(player.up.slim*slimHitboxCut(), 0.85)); }
+function updatePlayerRadius(p = player){ p.r = playerBaseR() * (1 - Math.min(p.up.slim*slimHitboxCut(), 0.85)); }
 
 // resets a given player object; `angle` places it on the arena between the core and the wall
 // (single-player always spawns at the bottom; PvP spawns the two on opposite lower corners).
 // `keepBuild` leaves the upgrade set alone (used by a race respawn, which shouldn't wipe it —
 // though PvP players have no upgrades anyway; jumpChargeMax()/radius still depend on it).
 function resetPlayerObj(p, angle, keepBuild){
-  const prev = player; player = p; // jumpChargeMax()/updatePlayerRadius() read the global `player`
   if(!keepBuild) p.up = { legs:0, reflex:0, slim:0, reflectSever:0, dashTrail:0, slowPull:0, extraJump:0, shieldCharge:0, scoreMult:0, slowMaxBoost:0, slowEfficiency:0, dashPower:0, respawnFast:0, respawnGuard:0 };
-  updatePlayerRadius();
+  updatePlayerRadius(p);
   const a = angle==null ? Math.PI/2 : angle;
   const rr = R*0.55;
   p.x = CX + Math.cos(a)*rr;
   p.y = CY + Math.sin(a)*rr;
   p.vx = 0; p.vy = 0;
   p.jumpT = 0; p.jumpCd = 0; p.jumpDurActive = ABILITY.JUMP_DUR; p.jumpDirX = 0; p.jumpDirY = 0;
-  p.jumpCharges = jumpChargeMax();
+  p.jumpCharges = jumpChargeMax(p);
   p.jumpZ = 0; p.jumpVZ = 0;
   p.dashT = 0; p.dashCd = 0;
   p.wallT = 0; p.wallCd = 0; p.wallUnlocked = false; p.wallAngle = 0; p.wallRadius = 0;
@@ -1137,7 +1148,6 @@ function resetPlayerObj(p, angle, keepBuild){
   p.slowEnergy = 100; p.slowActive = false; p.slowPullRepelT = 0;
   p.invincT = 0;
   p.facing = Math.atan2(CY-p.y, CX-p.x);
-  player = prev;
 }
 function resetPlayer(){
   abilityUnlockOrder = [];
@@ -1169,11 +1179,11 @@ function resetRunState(){
   for(const k in pressedEdge) pressedEdge[k] = false;
 }
 
+// hide every overlay except the pause screen (which setPaused owns). Callers that want a
+// specific overlay showing call this first, then reveal the one they want — so no stray
+// overlay can survive a state change and stack on top of another.
 function hideAllOverlays(){
-  document.getElementById('menuOverlay').classList.add('hidden');
-  document.getElementById('levelSelectOverlay').classList.add('hidden');
-  document.getElementById('goOverlay').classList.add('hidden');
-  document.getElementById('levelOverlay').classList.add('hidden');
+  document.querySelectorAll('.overlay:not(#pauseOverlay)').forEach(o=>o.classList.add('hidden'));
 }
 
 function startLevel(n){
@@ -1207,20 +1217,14 @@ function showMenu(){
   setPaused(false);
   inTutorialLevel = false; // safety net — any path back to the menu should never leave this stuck on
   if(multi()) exitPvp();
-  document.getElementById('goOverlay').classList.add('hidden');
-  document.getElementById('levelOverlay').classList.add('hidden');
-  document.getElementById('levelSelectOverlay').classList.add('hidden');
-  document.getElementById('pvpOverlay').classList.add('hidden');
-  document.getElementById('coopOverlay').classList.add('hidden');
+  hideAllOverlays();
   document.getElementById('menuOverlay').classList.remove('hidden');
 }
 
 function showLevelSelect(){
   state = 'levelselect';
   setPaused(false);
-  document.getElementById('goOverlay').classList.add('hidden');
-  document.getElementById('levelOverlay').classList.add('hidden');
-  document.getElementById('menuOverlay').classList.add('hidden');
+  hideAllOverlays();
   document.getElementById('levelSelectOverlay').classList.remove('hidden');
   renderLevelGrid();
 }
@@ -1237,7 +1241,6 @@ function showPvpMenu(){
   state = 'menu';
   setPaused(false);
   hideAllOverlays();
-  document.getElementById('menuOverlay').classList.add('hidden');
   document.getElementById('pvpOverlay').classList.remove('hidden');
 }
 
@@ -1252,7 +1255,7 @@ function startPvp(mode){
   currentLevel = PVP_RACE_LEVEL; // only actually read in race (levels) mode
   state = 'playing';
   setPaused(false);
-  testMode = false;
+  setTestMode(false); // never carry test mode's badge/unlocks into a multiplayer match
   tutorialActive = false; inTutorialLevel = false;
 
   resetRunState();
@@ -1274,7 +1277,6 @@ function startPvp(mode){
   document.documentElement.style.setProperty('--p2', PVP_P2_COLOR);
   setPvpHud(true);
   hideAllOverlays();
-  document.getElementById('pvpOverlay').classList.add('hidden');
 }
 
 // show/hide the whole multiplayer HUD: the two top status panels plus the side control
@@ -1290,8 +1292,8 @@ function updatePvpHud(){
     const p = players[i], n = i+1;
     document.getElementById('pvpName'+'P'+n).textContent = 'PLAYER '+n;
     const statEl = document.getElementById('pvpStat'+'P'+n);
-    const down = !p.alive && p.respawnT>0;
-    if(down){
+    const isDown = !p.alive && p.respawnT>0; // not `down` — that name is the global input helper
+    if(isDown){
       statEl.textContent = 'DOWN · '+p.respawnT.toFixed(1)+'s';
       statEl.classList.add('out');
     } else if(pvp && pvpMode==='race'){
@@ -1308,9 +1310,7 @@ function updatePvpHud(){
       statEl.classList.remove('out');
     }
     // dash-cooldown bar — fills back up as Dash recharges (no Slow-Mo in multiplayer)
-    const prev = player; player = p;
-    const frac = p.dashCd<=0 ? 1 : Math.max(0, Math.min(1, 1 - p.dashCd/dashCdMax()));
-    player = prev;
+    const frac = p.dashCd<=0 ? 1 : Math.max(0, Math.min(1, 1 - p.dashCd/dashCdMax(p)));
     document.getElementById('pvpSlow'+'P'+n).style.width = (frac*100)+'%';
   }
 }
@@ -1343,20 +1343,18 @@ function showPvpResult(winner){
 function exitPvp(){
   pvp = false; pvpMode = null; coop = false; coopMode = null; players = null; pvpOver = false;
   activeKeybinds = keybinds;
-  player = makePlayerObjectSafe();
+  // restore a clean single-player `player` so the rest of the game (HUD reads, menu) has a
+  // valid object to point at
+  player = makePlayerObject();
   setPvpHud(false);
   document.getElementById('pvpResultOverlay').classList.add('hidden');
 }
-// after a match, restore a clean single-player `player` so the rest of the game (HUD reads,
-// menu) has a valid object to point at
-function makePlayerObjectSafe(){ const p = makePlayerObject(); return p; }
 
 // ================= CO-OP =================
 function showCoopMenu(){
   state = 'menu';
   setPaused(false);
   hideAllOverlays();
-  document.getElementById('menuOverlay').classList.add('hidden');
   document.getElementById('coopOverlay').classList.remove('hidden');
 }
 
@@ -1369,7 +1367,7 @@ function startCoop(mode){
   currentLevel = COOP_TAKEDOWN_LEVEL;
   state = 'playing';
   setPaused(false);
-  testMode = false;
+  setTestMode(false); // never carry test mode's badge/unlocks into a multiplayer match
   tutorialActive = false; inTutorialLevel = false;
 
   resetRunState();
@@ -1391,7 +1389,6 @@ function startCoop(mode){
   document.documentElement.style.setProperty('--p2', COOP_P2_COLOR);
   setPvpHud(true);
   hideAllOverlays();
-  document.getElementById('coopOverlay').classList.add('hidden');
 }
 
 function showCoopResult(won){
@@ -1520,7 +1517,7 @@ const TUT_STEPS = [
     text:'Press <span class="k">E</span> for <b>Slow-Mo</b> — it slows every shot so you can thread through them or line up a sever. It drains as it runs and recharges on its own.' },
   { badge:'LEVELS MODE', title:'Upgrades', arrow:{el:'upgradePanel'}, highlight:'upgradePanel',
     text:'As you play you\'ll earn <b>upgrade picks</b> — some boost your stats, others unlock whole new abilities on <span class="k">Q</span>, <span class="k">F</span>, and <span class="k">R</span>. Here comes your first.' },
-  { title:'Upgrades', hideCoach:true, wait:'pick', onEnter:()=>{ enterLevelUp(); } },
+  { title:'Upgrades', hideCoach:true, wait:'pick', onEnter:()=>{ enterLevelUp(); if(state!=='levelup') advanceTutorial(); } }, // if the pool was empty, don't soft-lock behind a hidden coach box
   { badge:'LEVELS MODE', title:'Nice Pick',
     text:'Picks like that recur every so often. Your whole build <b>resets at the start of every level or run</b>, so each attempt is a fresh set of choices.' },
   { badge:'LEVELS MODE', title:'Destroying the Core', arrow:'core',
@@ -1749,7 +1746,7 @@ function showResultScreen(){
     titleEl.classList.remove('win'); titleEl.classList.add('fail');
     // now that killing the core is the only way to win, "percent complete" on a failed
     // attempt means percent of its health destroyed, not time survived
-    const pct = Math.max(0, Math.min(100, Math.round((1 - coreHP/CORE_MAX_HP)*100)));
+    const pct = Math.max(0, Math.min(100, Math.round((1 - coreHP/coreMaxHP)*100)));
     pctEl.className = 'go-time';
     pctEl.textContent = pct + '%';
     bestEl.textContent = 'complete';
@@ -1846,15 +1843,20 @@ document.getElementById('coachBtn').addEventListener('click', ()=>{
 });
 document.getElementById('coachSkip').addEventListener('click', finishTutorial);
 
-document.getElementById('testModeBtn').addEventListener('click', ()=>{
-  testMode = !testMode;
+// single owner of every test-mode side effect: the flag, the menu button, the in-run badge,
+// the level grid (test mode unlocks all levels) and the upgrade panel. Anything that turns
+// test mode on/off must go through here so nothing (e.g. starting a multiplayer match) can
+// leave a stale badge or an out-of-sync button/grid behind.
+function setTestMode(on){
+  testMode = on;
   const btn = document.getElementById('testModeBtn');
-  btn.textContent = 'TEST MODE: ' + (testMode ? 'ON' : 'OFF');
-  btn.classList.toggle('on', testMode);
-  document.getElementById('testModeBadge').style.display = testMode ? 'block' : 'none';
+  btn.textContent = 'TEST MODE: ' + (on ? 'ON' : 'OFF');
+  btn.classList.toggle('on', on);
+  document.getElementById('testModeBadge').style.display = on ? 'block' : 'none';
   renderLevelGrid();
   renderUpgradePanel();
-});
+}
+document.getElementById('testModeBtn').addEventListener('click', ()=> setTestMode(!testMode));
 
 function flashHit(strength, color){
   const f = document.getElementById('flash');
@@ -2793,6 +2795,9 @@ function scheduleStep(track, step, when, intens){
 // Web Audio clock fed about a sixth of a second ahead of game time.
 function updateMusic(){
   if(!audioCtx) return;
+  // the one-shot bootstrap gesture can leave the context suspended (Safari, or a gesture the
+  // browser doesn't count) — with no retry path the music would never start, so nudge it here
+  if(audioCtx.state === 'suspended') audioCtx.resume();
   const active = MUSIC_HOST.active();
   musicActiveGain.gain.setTargetAtTime(active ? 1 : 0, audioCtx.currentTime, 0.4);
 
@@ -3093,8 +3098,9 @@ function mkProj(o){
 }
 
 function playerPredicted(lead){
-  if(pvp){
+  if(multi()){
     // aim each shot at a randomly chosen living player, so the core threatens both fairly
+    // (co-op included — otherwise every shot would chase P1 and P2 would ride free)
     const alive = players.filter(p=>p.alive);
     const t = alive.length ? alive[(Math.random()*alive.length)|0] : players[0];
     return { x: t.x + t.vx*lead, y: t.y + t.vy*lead };
@@ -3106,9 +3112,9 @@ function playerPredicted(lead){
 }
 
 // where a homing shot should steer — the decoy beacon (single-player) or the nearest living
-// player (PvP)
+// player (any 2-player match)
 function homingTargetFor(p){
-  if(pvp){
+  if(multi()){
     let best=null, bd=Infinity;
     for(const q of players){ if(!q.alive) continue; const d=dist(q.x,q.y,p.x,p.y); if(d<bd){ bd=d; best=q; } }
     return best ? { x:best.x, y:best.y } : { x:CX, y:CY };
@@ -3302,7 +3308,7 @@ function patternPincerFans(){
     for(let i=0;i<count;i++){
       const a = a0 + (i/(count-1)-0.5)*arc;
       projectiles.push(mkProj({
-        x:CX+Math.cos(a0)*sr, y:CY+Math.sin(a0)*sr,
+        x:CX+Math.cos(a)*sr, y:CY+Math.sin(a)*sr, // spread along the ring like spawnFan, not all from one point
         vx:Math.cos(a)*speed, vy:Math.sin(a)*speed,
         r:pr(7), tag:'ground', color:'#ff6ad5', type:'fan'
       }));
@@ -3618,7 +3624,7 @@ function updatePlayer(dt){
 }
 
 // living players the shared systems (aim, homing, field-slow) should consider
-function activePlayers(){ return pvp ? players.filter(p=>p.alive) : [player]; }
+function activePlayers(){ return multi() ? players.filter(p=>p.alive) : [player]; }
 
 function projSlowFactor(){
   // slow-mo slows the whole shared field; in PvP that means either player triggering it
@@ -4137,6 +4143,7 @@ function drawArena(){
 function drawCore(){
   ctx.save();
   ctx.translate(CX,CY);
+  ctx.scale(R/400, R/400); // draw at fixed pixels tuned for R=400, then scale to the actual arena
   const pulse = 1 + Math.sin(elapsed*3.2)*0.06;
   const windup = pendingSpawn ? pendingSpawn.windupT/pendingSpawn.windupDur : 0;
   let windScale = 1 + windup*0.35; // the core visibly swells right before an "instant" attack fires
@@ -4429,6 +4436,8 @@ function drawPlayerShip(x, y, alpha){
   ctx.save();
   ctx.translate(x,y);
   ctx.rotate(player.facing);
+  ctx.scale(R/400, R/400); // fixed-pixel art tuned for R=400 — scale it to the real arena so a
+                           // short window doesn't leave the ship drawn ~3x its true hitbox
   ctx.globalAlpha = alpha;
 
   // shadow shrinks and fades as the player hops higher
@@ -4648,7 +4657,7 @@ function updateHud(){
     hudStyle('progressTrackDisp', levelProgressTrack, 'display', '');
     // the progress bar now tracks the actual win condition — core health destroyed — instead
     // of a survival timer, since killing the core is the only way to win a level
-    hudStyle('progress', levelProgressFill, 'width', Math.max(0,Math.min(100, (1-coreHP/CORE_MAX_HP)*100))+'%');
+    hudStyle('progress', levelProgressFill, 'width', Math.max(0,Math.min(100, (1-coreHP/coreMaxHP)*100))+'%');
     hudHTML('timeLeft', levelTimeLabel, '<b>'+Math.floor(elapsed)+'</b>s elapsed');
   }
   // severing doesn't exist in endless mode (no core to chip), so hide the counter there
@@ -4746,7 +4755,7 @@ function frame(now){
     }
   }
 
-  if(state==='playing' && multiUpgradeActive){
+  if(state==='playing' && multiUpgradeActive && !paused){
     updateMultiUpgrade(); // shared upgrade pick open — sim frozen until both players lock in
   } else if(state==='playing' && !paused && !tutorialFrozen){
     elapsed += dt;
