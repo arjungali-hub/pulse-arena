@@ -717,9 +717,14 @@ function resize(){
   AR = R*0.94; // the one true boundary: drawn, clamped-to, and despawned-against with this same value everywhere
 }
 window.addEventListener('resize', ()=>{
+  const prevW = W, prevH = H;
   resize();
   glowSpriteCache.clear(); // R changed -> old-radius glow sprites are stale; don't let them accumulate
-  if(state==='playing' && !paused) setPaused(true); // mid-run resize can invalidate in-flight positions; pause rather than risk it
+  // mobile browsers fire resize constantly as the URL bar shows/hides (a tens-of-px height
+  // wobble); only a real resize should pause a run, so ignore small changes — otherwise a
+  // phone player gets paused every time they scroll
+  const changed = Math.abs(W-prevW) > 24 || Math.abs(H-prevH) > 24;
+  if(changed && state==='playing' && !paused) setPaused(true); // mid-run resize can invalidate in-flight positions; pause rather than risk it
 });
 resize();
 
@@ -880,7 +885,7 @@ window.addEventListener('keydown', (e)=>{
     else if(k==='r' && (!levelWon || canRetryWin)){ if(gameMode==='endless') startEndless(); else startLevel(currentLevel); }
     else if(k===' ' || k==='enter'){
       if(gameMode==='endless') startEndless();
-      else if(levelWon && currentLevel < MAX_LEVEL) startLevel(currentLevel+1); // no phantom level 21 past the finale
+      else if(canAdvance()) startLevel(currentLevel+1); // no phantom level 21 past the finale
       else if(!levelWon) startLevel(currentLevel);
     }
   }
@@ -1117,13 +1122,13 @@ function jumpGravity(){ const T = jumpDurMax(); return 8/(T*T); }
 function jumpLaunchVZ(){ return jumpGravity()*jumpDurMax()/2; }
 function dashCdMax(p = player){ return Math.max(ABILITY.DASH_CD * (1 - p.up.reflex*reflexCdCut()), DASH_CD_FLOOR); }
 // Afterburner (dashPower) stretches the dash — it lasts longer, so it covers more ground
-function dashDurMax(){ return ABILITY.DASH_DUR * (1 + (player.up.dashPower||0)*0.3); }
+function dashDurMax(p = player){ return ABILITY.DASH_DUR * (1 + (p.up.dashPower||0)*0.3); }
 function slowEnergyMax(p = player){ return 100 + (p.up.slowMaxBoost||0)*30; } // Overcharge (endless-only)
 function slowRegenRate(){ return ABILITY.SLOW_REGEN; }
 // Conservation and Slim Profile have no stack limit, so their cut fractions are clamped well
 // short of 1 — otherwise enough stacks would drive drain rate or hitbox size to zero or negative
-function slowDrainRate(){ return ABILITY.SLOW_DRAIN * (1 - Math.min((player.up.slowEfficiency||0)*0.15, 0.85)); } // Conservation (endless-only)
-function moveSpeedMult(){ return 1 + player.up.legs*legsSpeedBonus(); }
+function slowDrainRate(p = player){ return ABILITY.SLOW_DRAIN * (1 - Math.min((p.up.slowEfficiency||0)*0.15, 0.85)); } // Conservation (endless-only)
+function moveSpeedMult(p = player){ return 1 + p.up.legs*legsSpeedBonus(); }
 function updatePlayerRadius(p = player){ p.r = playerBaseR() * (1 - Math.min(p.up.slim*slimHitboxCut(), 0.85)); }
 
 // resets a given player object; `angle` places it on the arena between the core and the wall
@@ -1698,6 +1703,11 @@ function renderLevelGrid(){
   });
 }
 
+// single source of truth for "is there a next level to go to" — the NEXT LEVEL button and the
+// Space/Enter key both read this, so they can never disagree (which is how Space used to start
+// a phantom level 21 past the finale)
+function canAdvance(){ return levelWon && currentLevel < MAX_LEVEL; }
+
 function showResultScreen(){
   if(inTutorialLevel) return; // the tutorial never reaches a real result screen — it can't be won or lost
   const titleEl = document.getElementById('goTitle');
@@ -1711,7 +1721,9 @@ function showResultScreen(){
     titleEl.classList.remove('win'); titleEl.classList.add('fail');
     pctEl.className = 'go-time'; // clear a lingering star-row from a previous Levels win
     pctEl.textContent = 'Score: ' + Math.floor(score);
-    document.getElementById('retryBtn').style.display = '';
+    const retryBtn = document.getElementById('retryBtn');
+    retryBtn.style.display = '';
+    retryBtn.textContent = 'RETRY (R / SPACE)'; // else it keeps a Levels-win's "RETRY FOR BETTER TIME"
     document.getElementById('nextLevelBtn').style.display = 'none';
     lsBtn.textContent = 'MAIN MENU (L)';
     document.getElementById('goOverlay').classList.remove('hidden');
@@ -1739,7 +1751,7 @@ function showResultScreen(){
     const retryBtn = document.getElementById('retryBtn');
     retryBtn.style.display = canRetryWin ? '' : 'none';
     retryBtn.textContent = 'RETRY FOR BETTER TIME (R)';
-    document.getElementById('nextLevelBtn').style.display = isLastLevel ? 'none' : '';
+    document.getElementById('nextLevelBtn').style.display = canAdvance() ? '' : 'none';
   } else {
     canRetryWin = false;
     titleEl.textContent = 'LEVEL FAILED';
@@ -2838,6 +2850,8 @@ const muteBtn = document.getElementById('muteBtn');
 muteBtn.textContent = 'MUSIC: ' + (musicMuted ? 'OFF' : 'ON');
 muteBtn.classList.toggle('on', !musicMuted);
 muteBtn.addEventListener('click', ()=>{
+  ensureAudio(); // a click here counts as a user gesture — start the context if it wasn't yet
+  if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
   setMusicMuted(!musicMuted);
   muteBtn.textContent = 'MUSIC: ' + (musicMuted ? 'OFF' : 'ON');
   muteBtn.classList.toggle('on', !musicMuted);
