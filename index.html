@@ -47,13 +47,29 @@
   .score-value{ font-size:36px; font-weight:700; color:var(--cyan); text-shadow:0 0 18px rgba(91,227,255,.5); font-variant-numeric:tabular-nums; }
   .level-progress-track{ width:230px; height:9px; border-radius:5px; background:rgba(255,255,255,.08); margin-top:10px; overflow:hidden; }
   .level-progress-fill{ height:100%; width:0%; background:var(--cyan); box-shadow:0 0 10px rgba(91,227,255,.7); transition:none; }
-  .level-time-label{ font-size:13px; color:var(--dim); margin-top:6px; font-variant-numeric:tabular-nums; letter-spacing:.03em; }
-  .level-time-label b{ color:var(--text); font-weight:700; }
+  /* shared style for the small score-block stat lines (time elapsed, severs, passthroughs) —
+     none of them is specifically a time label, so it isn't named for one */
+  .hud-stat{ font-size:13px; color:var(--dim); margin-top:6px; font-variant-numeric:tabular-nums; letter-spacing:.03em; }
+  .hud-stat b{ color:var(--text); font-weight:700; }
 
+  /* top-anchored (not centered) so unlocking a new ability grows the column DOWNWARD instead
+     of re-centering the whole stack and sliding every existing tile mid-fight while the player
+     is reaching for one. calc(50% - 144px) is where the centered baseline (3 tiles) already
+     sat, so nothing moves on the common path. */
   .hud-bottom{
-    /* nudged down from dead-center so the ability column clears the score block's extra
-       lines in test mode (Severs + Passthroughs), which would otherwise run behind it */
-    position:absolute; left:16px; top:60%; transform:translateY(-50%);
+    position:absolute; left:16px; top:calc(50% - 144px);
+  }
+  /* test mode adds extra score-block lines (Severs + Passthroughs); only then do we nudge the
+     ability column down so it clears them. Normal play keeps the baseline placement. */
+  .hud-bottom.test-offset{ top:calc(60% - 144px); }
+  /* short windows can't fit all six tiles at full size — shrink the tiles and gap so the
+     column still fits without running off-screen */
+  @media (max-height:820px){
+    .hud-bottom{ top:calc(50% - 108px); }
+    .hud-bottom.test-offset{ top:calc(60% - 108px); }
+    .abilities{ gap:8px; }
+    .ability{ width:60px; height:64px; }
+    .ability .glyph{ font-size:16px; }
   }
   .abilities{ display:flex; flex-direction:column; gap:12px; pointer-events:none; }
   .ability{
@@ -66,7 +82,11 @@
   }
   .ability.cooling{ opacity:.5; }
   .ability.locked{ display:none; } /* unlockable ones are inserted into the column in acquisition order, not reserved a fixed slot */
-  .ability .glyph{ font-size:19px; line-height:1; margin-bottom:3px; }
+  /* inline SVG (currentColor) instead of OS emoji, so the icons take each tile's --acc hue
+     and match the monochrome neon HUD rather than rendering as full-colour platform emoji */
+  .ability .glyph{ line-height:1; margin-bottom:3px; color:var(--acc, #5be3ff); display:flex; align-items:center; justify-content:center; }
+  .ability .glyph svg{ width:20px; height:20px; display:block; }
+  @media (max-height:820px){ .ability .glyph svg{ width:17px; height:17px; } }
   .ability .key{ font-size:11px; font-weight:700; color:var(--text); letter-spacing:.03em; }
   .ability .name{ font-size:9px; color:var(--dim); text-transform:uppercase; letter-spacing:.08em; margin-top:1px;}
   .ability .fill{
@@ -311,9 +331,13 @@
   }
   .bind-row .bind-btn:hover{ background:rgba(91,227,255,.12); }
   .bind-row .bind-btn.listening{ border-color:var(--orange); color:var(--orange); background:rgba(255,171,74,.12); }
-  .mode-cards{ display:flex; gap:22px; justify-content:center; flex-wrap:wrap; margin-top:14px; }
+  /* all four modes share one footprint — an equal 2x2 grid, each card the same structure
+     (title / one-line description / three feature bullets), so the 2-player modes don't read
+     as an afterthought bolted onto the two solo ones */
+  .mode-cards{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:16px; margin-top:14px; }
+  @media (max-width:560px){ .mode-cards{ grid-template-columns:1fr; } }
   .mode-card{
-    width:340px; padding:30px 26px; border-radius:22px; cursor:pointer; text-align:left;
+    padding:22px 20px; border-radius:18px; cursor:pointer; text-align:left;
     background:rgba(255,255,255,.03); border:1.5px solid rgba(255,255,255,.14);
     pointer-events:auto; transition:transform .15s ease, border-color .15s ease, background .15s ease;
   }
@@ -322,14 +346,17 @@
   .mode-card.levels:hover{ border-color:var(--cyan); background:rgba(91,227,255,.08); }
   .mode-card.endless{ border-color:rgba(255,91,216,.35); }
   .mode-card.endless:hover{ border-color:var(--magenta); background:rgba(255,91,216,.08); }
-  .mode-card-title{ font-size:30px; font-weight:800; margin-bottom:8px; }
+  .mode-card.pvp{ border-color:rgba(176,107,255,.35); }        /* purple — its own hue, not Endless's magenta */
+  .mode-card.pvp:hover{ border-color:var(--purple); background:rgba(176,107,255,.08); }
+  .mode-card.coop{ border-color:rgba(91,255,176,.35); }
+  .mode-card.coop:hover{ border-color:var(--green); background:rgba(91,255,176,.08); }
+  .mode-card-title{ font-size:24px; font-weight:800; margin-bottom:6px; }
   .mode-card.levels .mode-card-title{ color:var(--cyan); text-shadow:0 0 14px rgba(91,227,255,.5); }
   .mode-card.endless .mode-card-title{ color:var(--magenta); text-shadow:0 0 14px rgba(255,91,216,.5); }
-  .mode-card.pvp, .mode-card.coop{ width:100%; max-width:702px; }
-  .mode-card.pvp .mode-card-title{ color:var(--magenta); text-shadow:0 0 14px rgba(255,91,216,.5); }
-  .mode-card.coop .mode-card-title{ color:#6bffb0; text-shadow:0 0 14px rgba(107,255,176,.5); }
-  .mode-card-desc{ font-size:14.5px; color:var(--dim); line-height:1.45; margin-bottom:14px; }
-  .mode-card-features{ margin:0; padding-left:20px; font-size:13px; color:var(--dim); line-height:1.8; }
+  .mode-card.pvp .mode-card-title{ color:var(--purple); text-shadow:0 0 14px rgba(176,107,255,.5); }
+  .mode-card.coop .mode-card-title{ color:var(--green); text-shadow:0 0 14px rgba(91,255,176,.5); }
+  .mode-card-desc{ font-size:13px; color:var(--dim); line-height:1.4; margin-bottom:12px; }
+  .mode-card-features{ margin:0; padding-left:18px; font-size:12.5px; color:var(--dim); line-height:1.7; }
 
   .cta{
     font-size:15px; color:var(--text); background:rgba(91,227,255,.12);
@@ -399,6 +426,9 @@
   }
   .level-tile:hover{ transform:translateY(-3px) scale(1.02); background:rgba(255,255,255,.08); box-shadow:0 0 28px -2px var(--neon), inset 0 0 24px -12px var(--neon); }
   .level-tile.locked{ opacity:.28; cursor:not-allowed; pointer-events:none; }
+  /* the level number — was relying on inherited size/weight from .level-tile; state it
+     explicitly like every sibling (.stars/.lt-lock/.target-time) does */
+  .level-tile .lt-num{ font-size:clamp(22px,2.6vw,36px); font-weight:800; line-height:1.1; }
   .level-tile .stars{ font-size:clamp(15px,1.6vw,22px); letter-spacing:3px; }
   .level-tile .star-filled{ color:var(--neon); text-shadow:0 0 8px var(--neon); }
   .level-tile .star-empty{ color:rgba(255,255,255,.15); }
@@ -461,19 +491,19 @@
       <div class="score-label" id="scoreLabel">Level</div>
       <div class="score-value" id="curLevelVal">1</div>
       <div class="level-progress-track" id="levelProgressTrack"><div class="level-progress-fill" id="levelProgressFill"></div></div>
-      <div class="level-time-label" id="levelTimeLabel"><b>60</b>s left</div>
-      <div class="level-time-label" id="severLabel">Severs: <b>0</b></div>
-      <div class="level-time-label" id="testDeathLabel" style="display:none;">Passthroughs: <b>0</b></div>
+      <div class="hud-stat" id="levelTimeLabel"><b>0</b>s elapsed</div>
+      <div class="hud-stat" id="severLabel">Severs: <b>0</b></div>
+      <div class="hud-stat" id="testDeathLabel" style="display:none;">Passthroughs: <b>0</b></div>
     </div>
   </div>
   <div class="hud-bottom" id="hudBottom">
     <div class="abilities">
-      <div class="ability jump" id="abJump"><div class="fill" id="fillJump"></div><div class="cdnum" id="cdJump"></div><div class="charge-badge" id="jumpChargeBadge" style="display:none;"></div><div class="glyph">⬆</div><div class="key" id="keyLabelJump">SPACE</div><div class="name">Jump</div></div>
-      <div class="ability dash" id="abDash"><div class="fill" id="fillDash"></div><div class="cdnum" id="cdDash"></div><div class="glyph">⚡</div><div class="key" id="keyLabelAbility3">SHIFT</div><div class="name">Dash</div></div>
-      <div class="ability slow" id="abSlow"><div class="fill" id="fillSlow"></div><div class="fill-threshold" id="slowThreshold"></div><div class="cdnum" id="cdSlow"></div><div class="glyph">⏳</div><div class="key" id="keyLabelAbility2">E</div><div class="name">Slow-Mo</div></div>
-      <div class="ability wall locked" id="abWall"><div class="fill" id="fillWall"></div><div class="cdnum" id="cdWall"></div><div class="glyph">🛡</div><div class="key" id="keyLabelAbility1">Q</div><div class="name">Wall</div></div>
-      <div class="ability nova locked" id="abNova"><div class="fill" id="fillNova"></div><div class="cdnum" id="cdNova"></div><div class="glyph">💥</div><div class="key" id="keyLabelAbility4">F</div><div class="name">Nova</div></div>
-      <div class="ability decoy locked" id="abDecoy"><div class="fill" id="fillDecoy"></div><div class="cdnum" id="cdDecoy"></div><div class="glyph">🎯</div><div class="key" id="keyLabelAbility5">R</div><div class="name">Decoy</div></div>
+      <div class="ability jump" id="abJump"><div class="fill" id="fillJump"></div><div class="cdnum" id="cdJump"></div><div class="charge-badge" id="jumpChargeBadge" style="display:none;"></div><div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></div><div class="key" id="keyLabelJump">SPACE</div><div class="name">Jump</div></div>
+      <div class="ability dash" id="abDash"><div class="fill" id="fillDash"></div><div class="cdnum" id="cdDash"></div><div class="glyph"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4 14h6l-1 8 9-12h-6z"/></svg></div><div class="key" id="keyLabelAbility3">SHIFT</div><div class="name">Dash</div></div>
+      <div class="ability slow" id="abSlow"><div class="fill" id="fillSlow"></div><div class="fill-threshold" id="slowThreshold"></div><div class="cdnum" id="cdSlow"></div><div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12M6 21h12M8 3v3l4 4 4-4V3M8 21v-3l4-4 4 4v3"/></svg></div><div class="key" id="keyLabelAbility2">E</div><div class="name">Slow-Mo</div></div>
+      <div class="ability wall locked" id="abWall"><div class="fill" id="fillWall"></div><div class="cdnum" id="cdWall"></div><div class="glyph"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l8 3v6c0 5-4 9-8 11-4-2-8-6-8-11V5z"/></svg></div><div class="key" id="keyLabelAbility1">Q</div><div class="name">Wall</div></div>
+      <div class="ability nova locked" id="abNova"><div class="fill" id="fillNova"></div><div class="cdnum" id="cdNova"></div><div class="glyph"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.2 6.5L21 7l-5 5 5 5-6.8-1.5L12 22l-2.2-6.5L3 17l5-5-5-5 6.8 1.5z"/></svg></div><div class="key" id="keyLabelAbility4">F</div><div class="name">Nova</div></div>
+      <div class="ability decoy locked" id="abDecoy"><div class="fill" id="fillDecoy"></div><div class="cdnum" id="cdDecoy"></div><div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg></div><div class="key" id="keyLabelAbility5">R</div><div class="name">Decoy</div></div>
     </div>
   </div>
   <div class="pvp-hud hidden" id="pvpHud">
@@ -488,18 +518,10 @@
       <div class="pvp-bar"><div class="pvp-bar-fill" id="pvpSlowP2"></div></div>
     </div>
   </div>
-  <div class="pvp-ctrl-side left hidden" id="pvpCtrlP1">
-    <div class="pcs-who">P1</div>
-    <div class="pcs-row"><span>Move</span><b>WASD</b></div>
-    <div class="pcs-row"><span>Jump</span><b>F</b></div>
-    <div class="pcs-row"><span>Dash</span><b>Shift</b></div>
-  </div>
-  <div class="pvp-ctrl-side right hidden" id="pvpCtrlP2">
-    <div class="pcs-who">P2</div>
-    <div class="pcs-row"><span>Move</span><b>Arrows</b></div>
-    <div class="pcs-row"><span>Jump</span><b>/</b></div>
-    <div class="pcs-row"><span>Dash</span><b>.</b></div>
-  </div>
+  <!-- all three control tables (these two HUD cards + the PvP/Co-op menu columns) are filled
+       from PVP_KB_P1/P2 by renderMultiControls(), so a binding change updates every copy -->
+  <div class="pvp-ctrl-side left hidden" id="pvpCtrlP1"></div>
+  <div class="pvp-ctrl-side right hidden" id="pvpCtrlP2"></div>
 </div>
 
 <div class="overlay hidden" id="menuOverlay">
@@ -509,7 +531,7 @@
     <div class="mode-cards">
       <div class="mode-card levels" id="continueBtn">
         <div class="mode-card-title">Levels</div>
-        <div class="mode-card-desc">Destroy the core to clear all 20 levels — no time limit, just wear it down.</div>
+        <div class="mode-card-desc">Destroy the core to clear all 20 levels.</div>
         <ul class="mode-card-features">
           <li>Sever shots to damage the core</li>
           <li>Unlock new abilities (Q, F, R)</li>
@@ -518,7 +540,7 @@
       </div>
       <div class="mode-card endless" id="endlessBtn">
         <div class="mode-card-title">Endless</div>
-        <div class="mode-card-desc">No core, no time limit — just survive as long as you possibly can.</div>
+        <div class="mode-card-desc">Survive the endless barrage for score.</div>
         <ul class="mode-card-features">
           <li>Difficulty ramps up forever</li>
           <li>Score-boosting upgrades</li>
@@ -526,18 +548,30 @@
         </ul>
       </div>
       <div class="mode-card pvp" id="pvpBtn">
-        <div class="mode-card-title">PvP · Local 2-Player</div>
-        <div class="mode-card-desc">Two players, one keyboard. Survival — last one standing wins. Race — split the core and be first to destroy your half.</div>
+        <div class="mode-card-title">PvP</div>
+        <div class="mode-card-desc">Two players, one keyboard, head to head.</div>
+        <ul class="mode-card-features">
+          <li>Survival — last one standing</li>
+          <li>Race — split the core, finish first</li>
+          <li>Shared upgrade picks each round</li>
+        </ul>
       </div>
       <div class="mode-card coop" id="coopBtn">
-        <div class="mode-card-title">Co-op · Local 2-Player</div>
-        <div class="mode-card-desc">Two players, one keyboard, same team. Survival — endure together. Takedown — jointly destroy one shared core. Fall together and it's over.</div>
+        <div class="mode-card-title">Co-op</div>
+        <div class="mode-card-desc">Two players, one keyboard, same team.</div>
+        <ul class="mode-card-features">
+          <li>Survival — endure together</li>
+          <li>Takedown — one shared core</li>
+          <li>Fall together and it's over</li>
+        </ul>
       </div>
     </div>
     <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:22px;">
       <button class="cta ghost" id="howToPlayBtn">HOW TO PLAY</button>
       <button class="cta ghost" id="controlsBtn">CONTROLS</button>
-      <button class="cta ghost" id="testModeBtn">TEST MODE: OFF</button>
+      <!-- test mode is a developer tool (unlocks every level, makes you invincible); it only
+           appears with ?test=1 in the URL, so it never ships in the normal menu -->
+      <button class="cta ghost" id="testModeBtn" style="display:none;">TEST MODE: OFF</button>
       <button class="cta ghost" id="muteBtn">MUSIC: ON</button>
     </div>
   </div>
@@ -548,14 +582,8 @@
     <div class="title" style="font-size:38px;">PvP · Local 2-Player</div>
     <div class="subtitle" style="margin-bottom:10px;">Two players share one keyboard. Pick a mode.</div>
     <div class="pvp-controls">
-      <div class="pvp-ctrl-col p1">
-        <div class="who">PLAYER 1</div>
-        Move <b>W A S D</b><br>Jump <b>F</b><br>Dash <b>Left Shift</b>
-      </div>
-      <div class="pvp-ctrl-col p2">
-        <div class="who">PLAYER 2</div>
-        Move <b>Arrow Keys</b><br>Jump <b>/</b><br>Dash <b>.</b>
-      </div>
+      <div class="pvp-ctrl-col p1" id="pvpMenuCtrlP1"></div>
+      <div class="pvp-ctrl-col p2" id="pvpMenuCtrlP2"></div>
     </div>
     <div class="pvp-opt-cards">
       <div class="pvp-opt" id="pvpSurvivalBtn">
@@ -576,14 +604,8 @@
     <div class="title" style="font-size:38px;">Co-op · Local 2-Player</div>
     <div class="subtitle" style="margin-bottom:10px;">Two players, one keyboard, same team. Pick a mode.</div>
     <div class="pvp-controls">
-      <div class="pvp-ctrl-col p1">
-        <div class="who">PLAYER 1</div>
-        Move <b>W A S D</b><br>Jump <b>F</b><br>Dash <b>Left Shift</b>
-      </div>
-      <div class="pvp-ctrl-col p2">
-        <div class="who">PLAYER 2</div>
-        Move <b>Arrow Keys</b><br>Jump <b>/</b><br>Dash <b>.</b>
-      </div>
+      <div class="pvp-ctrl-col p1" id="coopMenuCtrlP1"></div>
+      <div class="pvp-ctrl-col p2" id="coopMenuCtrlP2"></div>
     </div>
     <div class="pvp-opt-cards">
       <div class="pvp-opt" id="coopSurvivalBtn">
@@ -804,6 +826,33 @@ function keyDisplayName(k){
   if(k==='arrowright') return '→';
   return k.toUpperCase();
 }
+
+// the multiplayer control tables (the two HUD side cards + the PvP and Co-op menu columns)
+// are all generated from PVP_KB_P1/P2 here, so a binding change updates every copy at once
+// instead of drifting between three hand-written duplicates
+function multiMoveLabel(kb){
+  const ks = [kb.moveUp[0], kb.moveLeft[0], kb.moveDown[0], kb.moveRight[0]];
+  if(ks.every(k=>k && k.startsWith('arrow'))) return 'Arrows'; // friendlier than "↑←↓→"
+  return ks.map(keyDisplayName).join('');
+}
+function multiControlRows(kb){
+  return [['Move', multiMoveLabel(kb)], ['Jump', keyDisplayName(kb.jump[0])], ['Dash', keyDisplayName(kb.ability3[0])]];
+}
+function renderMultiControls(){
+  const r1 = multiControlRows(PVP_KB_P1), r2 = multiControlRows(PVP_KB_P2);
+  const asCard = (who, rows) => '<div class="pcs-who">'+who+'</div>' +
+    rows.map(r=>'<div class="pcs-row"><span>'+r[0]+'</span><b>'+r[1]+'</b></div>').join('');
+  const asCol = (who, rows) => '<div class="who">'+who+'</div>' +
+    rows.map(r=>r[0]+' <b>'+r[1]+'</b>').join('<br>');
+  document.getElementById('pvpCtrlP1').innerHTML = asCard('P1', r1);
+  document.getElementById('pvpCtrlP2').innerHTML = asCard('P2', r2);
+  document.getElementById('pvpMenuCtrlP1').innerHTML = asCol('PLAYER 1', r1);
+  document.getElementById('pvpMenuCtrlP2').innerHTML = asCol('PLAYER 2', r2);
+  document.getElementById('coopMenuCtrlP1').innerHTML = asCol('PLAYER 1', r1);
+  document.getElementById('coopMenuCtrlP2').innerHTML = asCol('PLAYER 2', r2);
+}
+renderMultiControls();
+
 const REBINDABLE_ACTIONS = [
   { action:'jump', label:'Jump' },
   { action:'ability1', label:'Ability 1 — Wall' },
@@ -1756,12 +1805,13 @@ function showResultScreen(){
     canRetryWin = false;
     titleEl.textContent = 'LEVEL FAILED';
     titleEl.classList.remove('win'); titleEl.classList.add('fail');
-    // now that killing the core is the only way to win, "percent complete" on a failed
-    // attempt means percent of its health destroyed, not time survived
+    // killing the core is the only way to win, so on a fail show how far you got — percent of
+    // its health destroyed — as one readable phrase, and use the second line for a real stat
+    // (severs landed) instead of the old bare "complete"
     const pct = Math.max(0, Math.min(100, Math.round((1 - coreHP/coreMaxHP)*100)));
     pctEl.className = 'go-time';
-    pctEl.textContent = pct + '%';
-    bestEl.textContent = 'complete';
+    pctEl.textContent = pct + '% destroyed';
+    bestEl.innerHTML = '<b>' + severCount + '</b> sever' + (severCount===1 ? '' : 's') + ' landed';
     const retryBtn = document.getElementById('retryBtn');
     retryBtn.style.display = '';
     retryBtn.textContent = 'RETRY (R / SPACE)';
@@ -1865,6 +1915,8 @@ function setTestMode(on){
   btn.textContent = 'TEST MODE: ' + (on ? 'ON' : 'OFF');
   btn.classList.toggle('on', on);
   document.getElementById('testModeBadge').style.display = on ? 'block' : 'none';
+  // only test mode's extra score-block lines push the ability column down; normal play centers it
+  document.getElementById('hudBottom').classList.toggle('test-offset', on);
   renderLevelGrid();
   renderUpgradePanel();
 }
@@ -4879,6 +4931,12 @@ function frame(now){
 resetPlayer();
 renderLevelGrid();
 requestAnimationFrame(frame);
+
+// test mode is a developer tool — only surface its menu button when explicitly asked for via
+// ?test=1, so it never sits in the normal menu next to the real options
+if(new URLSearchParams(location.search).get('test') === '1'){
+  document.getElementById('testModeBtn').style.display = '';
+}
 
 // first-ever visit gets the guided tutorial instead of the plain menu; everyone after that
 // (and anyone who skips it) just sees the normal menu, with the same content available
