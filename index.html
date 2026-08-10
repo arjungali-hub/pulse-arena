@@ -310,6 +310,24 @@
   .muc-hint{ font-size:10.5px; color:var(--dim); letter-spacing:.08em; margin-top:8px; opacity:.7; }
   .muc-ready{ font-size:12px; font-weight:800; letter-spacing:.12em; color:var(--pc,#5be3ff); margin-top:8px; }
 
+  /* settings screen: a volume slider and a reduce-flashing toggle */
+  .settings-list{ display:flex; flex-direction:column; gap:14px; margin:20px 0 8px; }
+  .settings-row{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+    padding:12px 16px; border-radius:10px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.1); }
+  .settings-row label{ font-size:14px; font-weight:600; color:var(--text); text-align:left; }
+  .settings-row input[type=range]{
+    -webkit-appearance:none; appearance:none; flex:1; max-width:220px; height:5px; border-radius:3px;
+    background:rgba(255,255,255,.15); outline:none; cursor:pointer;
+  }
+  .settings-row input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; appearance:none; width:16px; height:16px; border-radius:50%;
+    background:var(--cyan); box-shadow:0 0 10px -1px var(--cyan); cursor:pointer;
+  }
+  .settings-row input[type=range]::-moz-range-thumb{
+    width:16px; height:16px; border:none; border-radius:50%; background:var(--cyan); box-shadow:0 0 10px -1px var(--cyan); cursor:pointer;
+  }
+  .settings-val{ font-size:13px; color:var(--dim); min-width:44px; text-align:right; font-variant-numeric:tabular-nums; }
+  .settings-toggle{ min-width:74px; }
   .bind-list{ display:flex; flex-direction:column; gap:8px; margin:18px 0; text-align:left; }
   .bind-row{
     display:flex; align-items:center; justify-content:space-between; gap:14px;
@@ -572,7 +590,7 @@
       <!-- test mode is a developer tool (unlocks every level, makes you invincible); it only
            appears with ?test=1 in the URL, so it never ships in the normal menu -->
       <button class="cta ghost" id="testModeBtn" style="display:none;">TEST MODE: OFF</button>
-      <button class="cta ghost" id="muteBtn">MUSIC: ON</button>
+      <button class="cta ghost" id="settingsBtn">SETTINGS</button>
     </div>
   </div>
 </div>
@@ -715,13 +733,56 @@
 <div class="overlay hidden" id="pauseOverlay">
   <div class="panel">
     <div class="title" style="font-size:44px;">PAUSED</div>
-    <button class="cta" id="resumeBtn">RESUME (ESC)</button>
+    <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
+      <button class="cta" id="resumeBtn" style="min-width:200px;">RESUME (ESC)</button>
+      <button class="cta ghost" id="pauseSettingsBtn" style="min-width:200px;">SETTINGS</button>
+      <button class="cta ghost" id="pauseQuitBtn" style="min-width:200px;">QUIT TO MENU</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay hidden" id="settingsOverlay">
+  <div class="panel">
+    <div class="title" style="font-size:34px;">SETTINGS</div>
+    <div class="settings-list">
+      <div class="settings-row">
+        <label for="volumeSlider">Volume</label>
+        <input type="range" id="volumeSlider" min="0" max="100" step="1" value="100">
+        <span class="settings-val" id="volumeVal">100%</span>
+      </div>
+      <div class="settings-row">
+        <label for="reduceMotionToggle">Reduce flashing &amp; shake</label>
+        <button class="cta ghost settings-toggle" id="reduceMotionToggle">OFF</button>
+      </div>
+    </div>
+    <div class="note" style="margin:6px 0 18px;">Reduce flashing dampens the screen flash, shake, and RGB-split effects — recommended if you're sensitive to flashing lights.</div>
+    <button class="cta" id="closeSettingsBtn" style="min-width:200px;">BACK</button>
   </div>
 </div>
 
 <script>
 (function(){
 "use strict";
+
+// Safari in private mode (and any browser with storage blocked) throws on localStorage access
+// rather than returning null. Every read/write goes through these so a blocked store degrades
+// to "nothing persists" instead of throwing before the game has drawn a single frame.
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+  set(k,v){ try { localStorage.setItem(k,v); } catch(e){} },
+  remove(k){ try { localStorage.removeItem(k); } catch(e){} }
+};
+
+// ---------- touch / device detection ----------
+// coarse pointer + no hover is the reliable "this is a phone or tablet" signal; a touchscreen
+// laptop reports touch support but still has a fine pointer and a real keyboard, and should
+// keep the desktop layout. `?touch=1` forces the mobile build on for testing on a desktop.
+const forceTouch = new URLSearchParams(location.search).get('touch') === '1';
+const isTouchDevice = forceTouch || (
+  ('ontouchstart' in window || navigator.maxTouchPoints > 0) &&
+  window.matchMedia('(pointer: coarse)').matches
+);
+if(isTouchDevice) document.body.classList.add('touch-device');
 
 // ---------- canvas / arena setup ----------
 const canvas = document.getElementById('game');
@@ -773,13 +834,13 @@ const KEYBINDS_KEY = 'pulseArenaKeybinds';
 let keybinds = {};
 for(const action in DEFAULT_KEYBINDS) keybinds[action] = DEFAULT_KEYBINDS[action].slice();
 try {
-  const saved = JSON.parse(localStorage.getItem(KEYBINDS_KEY) || 'null');
+  const saved = JSON.parse(store.get(KEYBINDS_KEY) || 'null');
   // merge over the defaults rather than replacing wholesale, so an older save missing a
   // newer action (or a corrupt/partial entry) can't leave that action completely unbound
   if(saved) for(const action in saved) if(keybinds[action]) keybinds[action] = saved[action];
 } catch(e) {}
 
-function saveKeybinds(){ localStorage.setItem(KEYBINDS_KEY, JSON.stringify(keybinds)); }
+function saveKeybinds(){ store.set(KEYBINDS_KEY, JSON.stringify(keybinds)); }
 function rebindAction(action, physicalKeys){
   keybinds[action] = Array.isArray(physicalKeys) ? physicalKeys.slice() : [physicalKeys];
 }
@@ -989,14 +1050,33 @@ function rand(a,b){ return a+Math.random()*(b-a); }
 // ---------- persistent progress ----------
 const MAX_LEVEL = 20; // the game has exactly this many levels — no more, no less
 const UNLOCKED_KEY = 'pulseArenaUnlockedLevel';
-let unlockedLevel = Math.min(MAX_LEVEL, parseInt(localStorage.getItem(UNLOCKED_KEY) || '1', 10) || 1);
+let unlockedLevel = Math.min(MAX_LEVEL, parseInt(store.get(UNLOCKED_KEY) || '1', 10) || 1);
 
 // best clear time per level (seconds from level start to core death), keyed by level number —
 // drives the level-select star rating. faster clears earn more stars.
 const LEVEL_TIMES_KEY = 'pulseArenaLevelTimes';
 let levelBestTimes = {};
-try { levelBestTimes = JSON.parse(localStorage.getItem(LEVEL_TIMES_KEY) || '{}') || {}; } catch(e) { levelBestTimes = {}; }
+try { levelBestTimes = JSON.parse(store.get(LEVEL_TIMES_KEY) || '{}') || {}; } catch(e) { levelBestTimes = {}; }
 let levelWinElapsed = 0; // snapshot of `elapsed` at the instant the core actually died, before the explosion/upgrade cutscene runs
+
+// best Endless score ever recorded. Endless has no win state, so this is the mode's only
+// persistent goal — it's what the run is actually for.
+const ENDLESS_BEST_KEY = 'pulseArenaEndlessBest';
+let endlessBest = Math.max(0, parseInt(store.get(ENDLESS_BEST_KEY) || '0', 10) || 0);
+let endlessBeatBest = false; // set on the run that overtakes the old best, so the result screen can celebrate it
+
+// scores get long fast (six figures in a good run) — group them so they stay readable at a glance
+function formatScore(n){ return Math.floor(n).toLocaleString('en-US'); }
+
+// returns true if this run set a new record
+function recordEndlessScore(finalScore){
+  const s = Math.floor(finalScore);
+  if(testMode) return false; // sandbox runs don't touch real progress
+  if(s <= endlessBest) return false;
+  endlessBest = s;
+  store.set(ENDLESS_BEST_KEY, String(endlessBest));
+  return true;
+}
 
 // time-to-beat for 3 and 2 stars; anything slower (but still a win) is 1 star. gentle
 // per-level increase since later levels throw more attack variety at you even though
@@ -1018,7 +1098,7 @@ function recordLevelTime(n, time){
   const prev = levelBestTimes[key];
   if(prev===undefined || time<prev){
     levelBestTimes[key] = time;
-    localStorage.setItem(LEVEL_TIMES_KEY, JSON.stringify(levelBestTimes));
+    store.set(LEVEL_TIMES_KEY, JSON.stringify(levelBestTimes));
   }
 }
 
@@ -1698,7 +1778,7 @@ function startTutorial(){
 }
 
 function finishTutorial(){
-  localStorage.setItem(TUTORIAL_SEEN_KEY, '1');
+  store.set(TUTORIAL_SEEN_KEY, '1');
   tutorialActive = false;
   tutorialFrozen = false;
   inTutorialLevel = false;
@@ -1826,7 +1906,7 @@ function winLevel(){
   // test-mode wins are a sandbox — they never touch real unlock progress
   if(!testMode && currentLevel < MAX_LEVEL && currentLevel >= unlockedLevel){
     unlockedLevel = currentLevel+1;
-    localStorage.setItem(UNLOCKED_KEY, String(unlockedLevel));
+    store.set(UNLOCKED_KEY, String(unlockedLevel));
   }
   recordLevelTime(currentLevel, levelWinElapsed);
   showResultScreen();
@@ -1870,6 +1950,8 @@ document.getElementById('retryBtn').addEventListener('click', ()=>{ if(gameMode=
 document.getElementById('nextLevelBtn').addEventListener('click', ()=> startLevel(currentLevel+1));
 document.getElementById('levelSelectBtn').addEventListener('click', ()=>{ if(gameMode==='endless') showMenu(); else showLevelSelect(); });
 document.getElementById('resumeBtn').addEventListener('click', ()=> setPaused(false));
+document.getElementById('pauseSettingsBtn').addEventListener('click', ()=> showSettings(true));
+document.getElementById('pauseQuitBtn').addEventListener('click', ()=>{ setPaused(false); showMenu(); });
 
 function showControls(){
   document.getElementById('menuOverlay').classList.add('hidden');
@@ -1922,7 +2004,25 @@ function setTestMode(on){
 }
 document.getElementById('testModeBtn').addEventListener('click', ()=> setTestMode(!testMode));
 
+// ================= SETTINGS =================
+const REDUCE_MOTION_KEY = 'pulseArenaReduceMotion';
+const MASTER_VOL_KEY = 'pulseArenaVolume';
+// reduce flashing / screen-shake / chroma-split for photosensitivity and comfort. Defaults to
+// the OS "prefers-reduced-motion" setting until the player picks explicitly, then that sticks.
+let reduceMotion = store.get(REDUCE_MOTION_KEY) != null
+  ? store.get(REDUCE_MOTION_KEY) === '1'
+  : !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+// master volume 0..1, scales both the music bus and the death cue
+let masterVolume = (()=>{ const v = parseFloat(store.get(MASTER_VOL_KEY)); return isNaN(v) ? 1 : Math.max(0, Math.min(1, v)); })();
+
+function setReduceMotion(on){
+  reduceMotion = on;
+  store.set(REDUCE_MOTION_KEY, on ? '1' : '0');
+}
+
 function flashHit(strength, color){
+  // reduce-motion keeps a faint hint of feedback but never a full-screen white flash
+  if(reduceMotion) strength = Math.min(strength, 0.12);
   const f = document.getElementById('flash');
   f.style.transition = 'none';
   if(color) f.style.background = color;
@@ -1934,6 +2034,7 @@ function flashHit(strength, color){
 }
 
 function chromaBurst(){
+  if(reduceMotion) return; // the RGB-split is pure flash — skip it entirely
   canvas.classList.add('chroma-split');
   setTimeout(()=>canvas.classList.remove('chroma-split'), 70);
 }
@@ -1985,7 +2086,7 @@ let drumBus = null;         // drums bypass the sidechain duck
 let pumpBus = null;         // bass/arp/lead/pad — ducked on every kick
 let padGain = null, padVoices = null;
 let delayNode = null, delayFb = null, delayWet = null;
-let musicMuted = localStorage.getItem(MUSIC_MUTED_KEY) === '1';
+let musicMuted = store.get(MUSIC_MUTED_KEY) === '1';
 
 // scheduler state
 let musicAnchor = 0;      // audioCtx time that corresponds to game time 0
@@ -2034,11 +2135,11 @@ function ensureAudio(){
   audioCtx = new Ctx();
 
   musicGain = audioCtx.createGain();
-  musicGain.gain.value = musicMuted ? 0 : MUSIC_VOL;
+  musicGain.gain.value = musicVolume();
   musicActiveGain = audioCtx.createGain();
   musicActiveGain.gain.value = 0; // silent until updateMusic() sees a run actually start
   sfxGain = audioCtx.createGain();
-  sfxGain.gain.value = 1;
+  sfxGain.gain.value = masterVolume;
 
   // a limiter right before the destination keeps a dense mix loud without digital crackle;
   // the death cue shares it so it never spikes into distortion over the music
@@ -2075,10 +2176,19 @@ function ensureAudio(){
 window.addEventListener('pointerdown', ensureAudio, { once:true });
 window.addEventListener('keydown', ensureAudio, { once:true });
 
+// the audible music level: master volume scaled by MUSIC_VOL, or 0 if muted
+function musicVolume(){ return musicMuted ? 0 : MUSIC_VOL * masterVolume; }
 function setMusicMuted(muted){
   musicMuted = muted;
-  localStorage.setItem(MUSIC_MUTED_KEY, muted ? '1' : '0');
-  if(musicGain) musicGain.gain.value = muted ? 0 : MUSIC_VOL;
+  store.set(MUSIC_MUTED_KEY, muted ? '1' : '0');
+  if(musicGain) musicGain.gain.value = musicVolume();
+}
+// master volume slider (0..1) — scales both the music bus and the death cue, and persists
+function setMasterVolume(v){
+  masterVolume = Math.max(0, Math.min(1, v));
+  store.set(MASTER_VOL_KEY, String(masterVolume));
+  if(musicGain) musicGain.gain.value = musicVolume();
+  if(sfxGain) sfxGain.gain.value = masterVolume;
 }
 
 // the one surviving sound effect: the run-ending death cue. A low descending tone plus a
@@ -2898,16 +3008,44 @@ function updateMusic(){
   }
 }
 
-const muteBtn = document.getElementById('muteBtn');
-muteBtn.textContent = 'MUSIC: ' + (musicMuted ? 'OFF' : 'ON');
-muteBtn.classList.toggle('on', !musicMuted);
-muteBtn.addEventListener('click', ()=>{
-  ensureAudio(); // a click here counts as a user gesture — start the context if it wasn't yet
+// ---------- settings screen ----------
+const volumeSlider = document.getElementById('volumeSlider');
+const volumeVal = document.getElementById('volumeVal');
+const reduceMotionToggle = document.getElementById('reduceMotionToggle');
+function syncSettingsUI(){
+  volumeSlider.value = Math.round(masterVolume*100);
+  volumeVal.textContent = Math.round(masterVolume*100) + '%';
+  reduceMotionToggle.textContent = reduceMotion ? 'ON' : 'OFF';
+  reduceMotionToggle.classList.toggle('on', reduceMotion);
+}
+let settingsReturnToPause = false; // remember whether Settings was opened from the pause menu
+function showSettings(fromPause){
+  settingsReturnToPause = !!fromPause;
+  syncSettingsUI();
+  document.getElementById('menuOverlay').classList.add('hidden');
+  document.getElementById('pauseOverlay').classList.add('hidden');
+  document.getElementById('settingsOverlay').classList.remove('hidden');
+}
+function closeSettings(){
+  document.getElementById('settingsOverlay').classList.add('hidden');
+  if(settingsReturnToPause) document.getElementById('pauseOverlay').classList.remove('hidden');
+  else document.getElementById('menuOverlay').classList.remove('hidden');
+}
+document.getElementById('settingsBtn').addEventListener('click', ()=> showSettings(false));
+document.getElementById('closeSettingsBtn').addEventListener('click', closeSettings);
+volumeSlider.addEventListener('input', ()=>{
+  ensureAudio(); // interacting counts as a user gesture — start the context if it wasn't yet
   if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-  setMusicMuted(!musicMuted);
-  muteBtn.textContent = 'MUSIC: ' + (musicMuted ? 'OFF' : 'ON');
-  muteBtn.classList.toggle('on', !musicMuted);
+  const v = (parseInt(volumeSlider.value,10)||0)/100;
+  setMasterVolume(v);
+  setMusicMuted(v <= 0); // dragging to zero mutes; anything above un-mutes
+  volumeVal.textContent = Math.round(v*100) + '%';
 });
+reduceMotionToggle.addEventListener('click', ()=>{
+  setReduceMotion(!reduceMotion);
+  syncSettingsUI();
+});
+syncSettingsUI();
 
 // ================= UPGRADES / LEVEL-UP =================
 // a few upgrades' numbers depend on gameMode, so their desc is a function instead of a
@@ -4569,7 +4707,7 @@ function render(){
   ctx.save();
   if(!paused && shakeT>0 && shakeMax>0){
     const shakeFrac = shakeT/shakeMax; // taper the magnitude down as the shake decays, instead of a hard cutoff
-    const mag = shakeMag*shakeFrac;
+    const mag = shakeMag*shakeFrac*(reduceMotion ? 0.25 : 1); // reduce-motion keeps a faint rumble, not a jolt
     // deterministic, time-based wobble (not per-frame rand()) so the vibration frequency
     // stays consistent regardless of monitor refresh rate — two off-ratio sine waves so
     // it still reads as a shake rather than a clean oscillation
@@ -4941,7 +5079,7 @@ if(new URLSearchParams(location.search).get('test') === '1'){
 // first-ever visit gets the guided tutorial instead of the plain menu; everyone after that
 // (and anyone who skips it) just sees the normal menu, with the same content available
 // on demand via the HOW TO PLAY button
-if(localStorage.getItem(TUTORIAL_SEEN_KEY)) showMenu();
+if(store.get(TUTORIAL_SEEN_KEY)) showMenu();
 else startTutorial();
 
 })();
