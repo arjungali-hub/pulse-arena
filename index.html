@@ -51,6 +51,10 @@
      none of them is specifically a time label, so it isn't named for one */
   .hud-stat{ font-size:13px; color:var(--dim); margin-top:6px; font-variant-numeric:tabular-nums; letter-spacing:.03em; }
   .hud-stat b{ color:var(--text); font-weight:700; }
+  /* the Endless best-score line once the current run has overtaken it */
+  .hud-stat.record{ color:var(--green); font-weight:800; letter-spacing:.14em;
+    text-shadow:0 0 12px rgba(91,255,176,.6); animation:recordPulse 1.4s ease-in-out infinite; }
+  @keyframes recordPulse{ 0%,100%{ opacity:.75; } 50%{ opacity:1; } }
 
   /* top-anchored (not centered) so unlocking a new ability grows the column DOWNWARD instead
      of re-centering the whole stack and sliding every existing tile mid-fight while the player
@@ -375,6 +379,13 @@
   .mode-card.coop .mode-card-title{ color:var(--green); text-shadow:0 0 14px rgba(91,255,176,.5); }
   .mode-card-desc{ font-size:13px; color:var(--dim); line-height:1.4; margin-bottom:12px; }
   .mode-card-features{ margin:0; padding-left:18px; font-size:12.5px; color:var(--dim); line-height:1.7; }
+  /* your standing record in this mode, rendered only once there's one to show — an empty
+     element collapses to nothing, so a first-time player sees the card exactly as before */
+  .mode-card-stat{ font-size:12.5px; font-weight:700; letter-spacing:.06em; }
+  .mode-card-stat:not(:empty){ margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,.1); }
+  .mode-card-stat b{ font-variant-numeric:tabular-nums; }
+  .mode-card.levels .mode-card-stat{ color:var(--cyan); }
+  .mode-card.endless .mode-card-stat{ color:var(--magenta); }
 
   .cta{
     font-size:15px; color:var(--text); background:rgba(91,227,255,.12);
@@ -511,6 +522,7 @@
       <div class="level-progress-track" id="levelProgressTrack"><div class="level-progress-fill" id="levelProgressFill"></div></div>
       <div class="hud-stat" id="levelTimeLabel"><b>0</b>s elapsed</div>
       <div class="hud-stat" id="severLabel">Severs: <b>0</b></div>
+      <div class="hud-stat" id="endlessBestLabel" style="display:none;">Best: <b>0</b></div>
       <div class="hud-stat" id="testDeathLabel" style="display:none;">Passthroughs: <b>0</b></div>
     </div>
   </div>
@@ -555,6 +567,7 @@
           <li>Unlock new abilities (Q, F, R)</li>
           <li>Star ratings for fast clears</li>
         </ul>
+        <div class="mode-card-stat" id="levelsProgressStat"></div>
       </div>
       <div class="mode-card endless" id="endlessBtn">
         <div class="mode-card-title">Endless</div>
@@ -564,6 +577,7 @@
           <li>Score-boosting upgrades</li>
           <li>Chase a new high score</li>
         </ul>
+        <div class="mode-card-stat" id="endlessBestStat"></div>
       </div>
       <div class="mode-card pvp" id="pvpBtn">
         <div class="mode-card-title">PvP</div>
@@ -1063,7 +1077,8 @@ let levelWinElapsed = 0; // snapshot of `elapsed` at the instant the core actual
 // persistent goal — it's what the run is actually for.
 const ENDLESS_BEST_KEY = 'pulseArenaEndlessBest';
 let endlessBest = Math.max(0, parseInt(store.get(ENDLESS_BEST_KEY) || '0', 10) || 0);
-let endlessBeatBest = false; // set on the run that overtakes the old best, so the result screen can celebrate it
+let endlessBeatBest = false;  // set on the run that overtakes the old best, so the result screen can celebrate it
+let endlessPrevBest = 0;      // the record this run displaced, kept so the result screen can show what was beaten
 
 // scores get long fast (six figures in a good run) — group them so they stay readable at a glance
 function formatScore(n){ return Math.floor(n).toLocaleString('en-US'); }
@@ -1073,6 +1088,7 @@ function recordEndlessScore(finalScore){
   const s = Math.floor(finalScore);
   if(testMode) return false; // sandbox runs don't touch real progress
   if(s <= endlessBest) return false;
+  endlessPrevBest = endlessBest;
   endlessBest = s;
   store.set(ENDLESS_BEST_KEY, String(endlessBest));
   return true;
@@ -1338,6 +1354,7 @@ function startEndless(){
   gameMode = 'endless';
   state = 'playing';
   setPaused(false);
+  endlessBeatBest = false;
   currentLevel = 1;
   resetRunState();
   resetPlayer();
@@ -1346,12 +1363,26 @@ function startEndless(){
   hideAllOverlays();
 }
 
+// each mode card carries your standing record in that mode, so the menu shows what there is
+// to beat rather than being a pure launcher. Recomputed on every menu visit — a run that just
+// ended should be reflected the moment you land back here.
+function renderMenuStats(){
+  let stars = 0;
+  for(const n in levelBestTimes) stars += starsForTime(parseInt(n,10), levelBestTimes[n]);
+  const maxStars = MAX_LEVEL*3;
+  document.getElementById('levelsProgressStat').innerHTML =
+    stars>0 ? '★ <b>'+stars+'</b> / '+maxStars+' stars' : '';
+  document.getElementById('endlessBestStat').innerHTML =
+    endlessBest>0 ? 'Best <b>'+formatScore(endlessBest)+'</b>' : '';
+}
+
 function showMenu(){
   state = 'menu';
   setPaused(false);
   inTutorialLevel = false; // safety net — any path back to the menu should never leave this stuck on
   if(multi()) exitPvp();
   hideAllOverlays();
+  renderMenuStats();
   document.getElementById('menuOverlay').classList.remove('hidden');
 }
 
@@ -1844,12 +1875,21 @@ function showResultScreen(){
   const lsBtn = document.getElementById('levelSelectBtn');
   if(gameMode==='endless'){
     // endless only ever ends by dying — there's no win state, just a final score
+    endlessBeatBest = recordEndlessScore(score);
     canRetryWin = false;
     document.getElementById('goSubtitle').textContent = 'Endless Mode';
-    titleEl.textContent = 'RUN OVER';
-    titleEl.classList.remove('win'); titleEl.classList.add('fail');
-    pctEl.className = 'go-time'; // clear a lingering star-row from a previous Levels win
-    pctEl.textContent = 'Score: ' + Math.floor(score);
+    titleEl.textContent = endlessBeatBest ? 'NEW HIGH SCORE' : 'RUN OVER';
+    titleEl.classList.toggle('win', endlessBeatBest);
+    titleEl.classList.toggle('fail', !endlessBeatBest);
+    pctEl.className = 'go-time' + (endlessBeatBest ? ' win' : ''); // clear a lingering star-row from a previous Levels win
+    pctEl.textContent = formatScore(score);
+    // the run's own stats on one line, the standing record underneath — so a run always ends
+    // by showing you the number you're actually chasing
+    const goBestEl = document.getElementById('goBest');
+    const survived = '<b>' + Math.floor(elapsed) + 's</b> survived';
+    goBestEl.innerHTML = endlessBeatBest
+      ? survived + ' &middot; previous best <b>' + formatScore(endlessPrevBest) + '</b>'
+      : survived + ' &middot; best <b>' + formatScore(endlessBest) + '</b>';
     const retryBtn = document.getElementById('retryBtn');
     retryBtn.style.display = '';
     retryBtn.textContent = 'RETRY (R / SPACE)'; // else it keeps a Levels-win's "RETRY FOR BETTER TIME"
@@ -4776,6 +4816,7 @@ const levelProgressTrack = document.getElementById('levelProgressTrack');
 const levelProgressFill = document.getElementById('levelProgressFill');
 const levelTimeLabel = document.getElementById('levelTimeLabel');
 const severLabel = document.getElementById('severLabel');
+const endlessBestLabel = document.getElementById('endlessBestLabel');
 const testDeathLabel = document.getElementById('testDeathLabel');
 const fillJump = document.getElementById('fillJump');
 const fillDash = document.getElementById('fillDash');
@@ -4852,7 +4893,7 @@ function updateHud(){
   hudStyle('scoreBlockDisp', scoreLabel.parentElement, 'display', (state==='menu'||state==='levelselect') ? 'none' : '');
   if(gameMode==='endless'){
     hudText('scoreLabel', scoreLabel, 'Score');
-    hudText('curLevel', curLevelVal, String(Math.floor(score)));
+    hudText('curLevel', curLevelVal, formatScore(score));
     hudStyle('progressTrackDisp', levelProgressTrack, 'display', 'none');
     hudHTML('timeLeft', levelTimeLabel, '<b>'+Math.floor(elapsed)+'</b>s survived');
   } else {
@@ -4867,6 +4908,15 @@ function updateHud(){
   // severing doesn't exist in endless mode (no core to chip), so hide the counter there
   hudStyle('severDisp', severLabel, 'display', gameMode==='endless' ? 'none' : '');
   if(gameMode!=='endless') hudHTML('sever', severLabel, 'Severs: <b>'+severCount+'</b>');
+  // the record to chase, live in the corner. Once the run passes it the line flips to a
+  // standing "record beaten" call-out, so you know mid-run that you're in new territory.
+  const showBest = gameMode==='endless' && endlessBest>0;
+  hudStyle('bestDisp', endlessBestLabel, 'display', showBest ? '' : 'none');
+  if(showBest){
+    const beaten = score > endlessBest;
+    hudHTML('best', endlessBestLabel, beaten ? 'NEW BEST' : 'Best: <b>'+formatScore(endlessBest)+'</b>');
+    hudClass('bestBeaten', endlessBestLabel, 'record', beaten);
+  }
   hudStyle('testDeathDisp', testDeathLabel, 'display', testMode ? '' : 'none');
   if(testMode) hudHTML('testDeath', testDeathLabel, 'Passthroughs: <b>'+testDeathCount+'</b>');
   hudStyle('hudBottomDisp', hudBottom, 'display', (state==='menu'||state==='levelselect') ? 'none' : '');
