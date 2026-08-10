@@ -3,7 +3,24 @@
 <head>
 <meta charset="utf-8" />
 <title>Pulse Arena</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<meta name="description" content="Pulse Arena — a neon twin-stick survival game. Dodge the core's barrage, sever its shots to tear it down across 20 levels, or survive forever in Endless. Solo or local 2-player. Plays in any browser." />
+<meta name="theme-color" content="#05070d" />
+<meta name="color-scheme" content="dark" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Pulse Arena" />
+<link rel="manifest" href="manifest.webmanifest" />
+
+<meta property="og:type" content="website" />
+<meta property="og:title" content="Pulse Arena" />
+<meta property="og:description" content="A neon twin-stick survival game. Dodge the core, sever its shots, clear 20 levels — or survive forever in Endless." />
+<meta property="og:image" content="social-card.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Pulse Arena" />
+<meta name="twitter:description" content="A neon twin-stick survival game. Dodge the core, sever its shots, clear 20 levels — or survive forever in Endless." />
+<meta name="twitter:image" content="social-card.png" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='32' fill='%2305070d'/%3E%3Ccircle cx='32' cy='32' r='26' fill='none' stroke='%235be3ff' stroke-width='3' opacity='0.55'/%3E%3Ccircle cx='32' cy='32' r='16' fill='%23ff8c50'/%3E%3Ccircle cx='32' cy='32' r='7' fill='%23fff7ea'/%3E%3C/svg%3E" />
 <style>
   :root{
@@ -24,7 +41,16 @@
     background:radial-gradient(ellipse at 50% 45%, #0a0f1c 0%, var(--bg0) 70%);
     font-family: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
     color:var(--text);
+    /* on a touch device every one of these browser defaults fights the game: a drag would
+       scroll or pull-to-refresh, a double-tap would zoom, a long-press would select text or
+       raise the callout menu, and every tap would paint a grey highlight box */
+    touch-action:none; -webkit-user-select:none; user-select:none;
+    -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent;
+    overscroll-behavior:none;
   }
+  /* overlays are the one place text selection could legitimately matter, but allowing it there
+     makes menu taps feel like text drags — keep it off and let the panels scroll instead */
+  .overlay{ touch-action:pan-y; }
   #game{ position:fixed; inset:0; display:block; transition:filter .05s linear; }
   #game.chroma-split{
     filter: drop-shadow(-3px 0 0 rgba(255,20,90,.55)) drop-shadow(3px 0 0 rgba(20,220,255,.55));
@@ -386,6 +412,11 @@
   .mode-card-stat b{ font-variant-numeric:tabular-nums; }
   .mode-card.levels .mode-card-stat{ color:var(--cyan); }
   .mode-card.endless .mode-card-stat{ color:var(--magenta); }
+  /* the 2-player modes put both players on one keyboard, so they stay selectable on a tablet
+     with a keyboard attached — but a phone player deserves to know before tapping in */
+  .kbd-only-badge{ display:none; margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,.1);
+    font-size:11.5px; font-weight:700; letter-spacing:.06em; color:var(--orange); }
+  body.touch-device .kbd-only-badge{ display:block; }
 
   .cta{
     font-size:15px; color:var(--text); background:rgba(91,227,255,.12);
@@ -492,6 +523,119 @@
     font-size:10px; letter-spacing:.15em; color:var(--dim); text-transform:uppercase; margin-bottom:2px;
   }
   .upgrade-panel .tu-empty{ font-size:11.5px; color:var(--dim); font-style:italic; }
+
+  /* ================= TOUCH CONTROLS =================
+     Only ever visible on a coarse-pointer device (body.touch-device). The ability tiles are
+     NOT duplicated here — on touch the existing HUD ability column simply becomes tappable and
+     moves to the right thumb, so cooldown fills, lock state and acquisition order keep working
+     with no second copy to drift out of sync. */
+  .touch-layer{ position:fixed; inset:0; z-index:30; pointer-events:none; display:none; }
+  body.touch-device .touch-layer.active{ display:block; }
+
+  /* the stick is invisible until touched: a fixed on-screen pad forces the thumb to a spot the
+     hand may not rest at. Touching anywhere in the left half plants the stick right there. */
+  .stick{ position:absolute; width:132px; height:132px; margin:-66px 0 0 -66px;
+    border-radius:50%; border:2px solid rgba(91,227,255,.35);
+    background:radial-gradient(circle, rgba(91,227,255,.10), rgba(91,227,255,.02) 70%);
+    opacity:0; transition:opacity .12s ease; }
+  .stick.active{ opacity:1; }
+  .stick-nub{ position:absolute; left:50%; top:50%; width:56px; height:56px; margin:-28px 0 0 -28px;
+    border-radius:50%; background:rgba(91,227,255,.28); border:2px solid var(--cyan);
+    box-shadow:0 0 18px -2px var(--cyan); }
+
+  /* a persistent hint of where the stick lives, shown until the player first uses it */
+  .stick-hint{ position:absolute; left:96px; bottom:96px; width:132px; height:132px; margin:-66px 0 0 -66px;
+    border-radius:50%; border:2px dashed rgba(91,227,255,.22);
+    display:flex; align-items:center; justify-content:center;
+    font-size:10px; letter-spacing:.14em; color:rgba(91,227,255,.5); text-align:center;
+    animation:stickHintPulse 2.2s ease-in-out infinite; }
+  .stick-hint.hidden{ display:none; }
+  @keyframes stickHintPulse{ 0%,100%{ opacity:.45; } 50%{ opacity:.9; } }
+
+  .touch-pause{ position:absolute; top:calc(12px + env(safe-area-inset-top)); right:calc(12px + env(safe-area-inset-right));
+    width:44px; height:44px; border-radius:12px; pointer-events:auto;
+    background:rgba(10,14,26,.72); border:1.5px solid rgba(255,255,255,.2);
+    display:flex; align-items:center; justify-content:center; }
+  .touch-pause svg{ width:18px; height:18px; color:var(--text); }
+
+  /* ---- touch layout overrides for the HUD itself ---- */
+  body.touch-device .hud-bottom{
+    left:auto; top:auto;
+    right:calc(14px + env(safe-area-inset-right));
+    bottom:calc(20px + env(safe-area-inset-bottom));
+  }
+  body.touch-device .hud-bottom.test-offset{ top:auto; }
+  body.touch-device .abilities{ pointer-events:auto; gap:10px; }
+  body.touch-device .ability{
+    width:66px; height:66px; border-radius:16px; padding:0;
+    background:rgba(10,14,26,.78);
+  }
+  body.touch-device .ability .glyph{ margin-bottom:0; }
+  body.touch-device .ability .glyph svg{ width:24px; height:24px; }
+  /* the physical-key caption is meaningless when the tile IS the button */
+  body.touch-device .ability .key{ display:none; }
+  body.touch-device .ability .name{ font-size:8px; margin-top:2px; }
+  body.touch-device .ability.pressed{ transform:scale(.92); }
+  body.touch-device .ability{ transition:opacity .15s ease, transform .06s ease; }
+  /* the top-left readout sits under the notch on a phone */
+  body.touch-device .hud-top{ padding:calc(10px + env(safe-area-inset-top)) 16px 0 calc(16px + env(safe-area-inset-left)); }
+  body.touch-device .score-value{ font-size:28px; }
+  body.touch-device .level-progress-track{ width:150px; }
+  /* the desktop upgrade side-panel would sit under the ability thumb column */
+  body.touch-device .upgrade-panel{ display:none !important; }
+
+  /* ---- small screens: the menus were laid out for a desktop window ---- */
+  @media (max-width:760px){
+    .overlay{ padding:16px 12px; }
+    .panel, .panel.wide{ max-width:100%; padding:16px 12px; }
+    .title{ font-size:34px; }
+    .subtitle{ font-size:12px; margin-bottom:14px; }
+    .mode-cards{ grid-template-columns:1fr; gap:12px; }
+    .mode-card{ padding:16px 16px; }
+    .mode-card-title{ font-size:20px; }
+    .mode-card-features{ line-height:1.6; }
+    .cta{ font-size:14px; padding:12px 22px; }
+    .cta.ghost{ font-size:12px; padding:10px 18px; }
+    /* touch targets: 44px is the floor at which a finger reliably hits what it aimed at */
+    .cta, .cta.ghost{ min-height:44px; }
+    .instructions{ gap:14px; }
+    .instr{ width:100%; max-width:280px; }
+    .cards{ gap:10px; }
+    .card{ width:100%; max-width:320px; }
+    .go-time{ font-size:44px; }
+    .go-time.star-row .star-slot{ font-size:42px; }
+    .result-title{ font-size:28px; }
+    .pvp-opt{ width:100%; }
+    .multi-up-cols{ gap:14px; }
+    /* 4x5 is unreadable on a phone; 3 columns and natural height with a scroll */
+    .level-select-panel{ width:100%; max-width:100%; }
+    .level-grid{ grid-template-columns:repeat(3, 1fr); grid-template-rows:none; height:auto; gap:8px; }
+    .level-tile{ aspect-ratio:1; gap:2px; }
+    .level-tile .lt-num{ font-size:20px; }
+    .level-tile .stars{ font-size:13px; letter-spacing:1px; }
+    /* the per-level star thresholds don't fit a phone tile — the stars themselves still read */
+    .level-tile .target-time{ display:none; }
+    .bind-row{ padding:9px 12px; flex-wrap:wrap; }
+    .coach{ bottom:auto; top:16px; padding:14px 16px; }
+    .coach-title{ font-size:17px; }
+    .coach-text{ font-size:12.5px; }
+    .settings-row{ flex-wrap:wrap; gap:10px; }
+    .settings-row input[type=range]{ max-width:none; flex:1 1 140px; }
+  }
+  /* landscape phones are short, not narrow — the constraint is vertical */
+  @media (max-height:480px){
+    .overlay{ padding:10px; }
+    .title{ font-size:26px; margin-bottom:0; }
+    .subtitle{ margin-bottom:8px; }
+    .note{ margin:2px 0 10px; }
+    .mode-cards{ grid-template-columns:repeat(2,1fr); gap:8px; }
+    .mode-card{ padding:10px 12px; }
+    .mode-card-title{ font-size:16px; margin-bottom:2px; }
+    .mode-card-desc{ font-size:11px; margin-bottom:6px; }
+    .mode-card-features{ font-size:10.5px; line-height:1.45; }
+    .go-time{ font-size:34px; }
+    .result-title{ font-size:22px; }
+  }
   .upgrade-item{
     background:rgba(10,14,26,.78); border:1.5px solid rgba(255,255,255,.14); border-radius:10px;
     padding:8px 12px; cursor:default; text-align:left;
@@ -554,6 +698,16 @@
   <div class="pvp-ctrl-side right hidden" id="pvpCtrlP2"></div>
 </div>
 
+<!-- touch-only control layer: a floating analog stick on the left thumb and a pause button.
+     The ability buttons are the HUD ability tiles themselves (see the touch CSS above). -->
+<div class="touch-layer" id="touchLayer">
+  <div class="stick-hint" id="stickHint">DRAG<br>TO MOVE</div>
+  <div class="stick" id="touchStick"><div class="stick-nub" id="touchStickNub"></div></div>
+  <button class="touch-pause" id="touchPauseBtn" aria-label="Pause">
+    <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+  </button>
+</div>
+
 <div class="overlay hidden" id="menuOverlay">
   <div class="panel wide">
     <div class="title">Pulse Arena</div>
@@ -587,6 +741,7 @@
           <li>Race — split the core, finish first</li>
           <li>Shared upgrade picks each round</li>
         </ul>
+        <div class="kbd-only-badge">Needs a keyboard</div>
       </div>
       <div class="mode-card coop" id="coopBtn">
         <div class="mode-card-title">Co-op</div>
@@ -596,6 +751,7 @@
           <li>Takedown — one shared core</li>
           <li>Fall together and it's over</li>
         </ul>
+        <div class="kbd-only-badge">Needs a keyboard</div>
       </div>
     </div>
     <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:22px;">
@@ -804,7 +960,10 @@ const ctx = canvas.getContext('2d');
 let W=0,H=0, CX=0, CY=0, R=0, AR=0; // canvas size (CSS px), center, arena fit radius, true playable boundary radius
 
 function resize(){
-  const dpr = window.devicePixelRatio || 1;
+  // phones report a devicePixelRatio of 3 (some 4), which would have the canvas pushing ~9x
+  // the pixels of a CSS-size buffer every frame — the single biggest cost on mobile, and
+  // invisible past 2x on a screen held at arm's length
+  const dpr = Math.min(window.devicePixelRatio || 1, isTouchDevice ? 2 : 3);
   W = window.innerWidth; H = window.innerHeight;
   canvas.width = Math.round(W*dpr); canvas.height = Math.round(H*dpr);
   canvas.style.width = W+'px'; canvas.style.height = H+'px';
@@ -858,13 +1017,30 @@ function saveKeybinds(){ store.set(KEYBINDS_KEY, JSON.stringify(keybinds)); }
 function rebindAction(action, physicalKeys){
   keybinds[action] = Array.isArray(physicalKeys) ? physicalKeys.slice() : [physicalKeys];
 }
+// on-screen touch controls feed these parallel maps rather than the physical-key ones, so a
+// tap can't be clobbered by a rebind and the two input methods stack cleanly (a Bluetooth
+// keyboard paired to a tablet keeps working alongside the on-screen buttons)
+const touchHeld = Object.create(null);  // action -> currently held
+const touchEdge = Object.create(null);  // action -> pressed since last consume
+// analog movement from the virtual stick, already normalised. `active` gates it so a released
+// stick doesn't pin the player to its last direction.
+const touchStickVec = { active:false, x:0, y:0 };
+
 // the input helpers read whichever keybind set is "active" — normally the player's own
 // rebindable set, but during PvP it's swapped to each player's fixed set as they're updated
 let activeKeybinds = keybinds;
 function down(...ks){ return ks.some(k=>keys[k]); }
-function isActionDown(action){ return down(...activeKeybinds[action]); }
-function isActionPressed(action){ return (activeKeybinds[action]||[]).some(k=>pressedEdge[k]); }
-function consumeActionPress(action){ for(const k of (activeKeybinds[action]||[])) pressedEdge[k]=false; }
+// touch input is single-player only — a 2-player match swaps activeKeybinds per player, and
+// one shared set of on-screen buttons has no way to say which player pressed it
+function touchOwnsInput(){ return isTouchDevice && !multi(); }
+function isActionDown(action){ return down(...activeKeybinds[action]) || (touchOwnsInput() && !!touchHeld[action]); }
+function isActionPressed(action){
+  return (activeKeybinds[action]||[]).some(k=>pressedEdge[k]) || (touchOwnsInput() && !!touchEdge[action]);
+}
+function consumeActionPress(action){
+  for(const k of (activeKeybinds[action]||[])) pressedEdge[k]=false;
+  touchEdge[action] = false;
+}
 
 // ---------- PvP: two players on one keyboard ----------
 // fixed control sets, one per player. Every action name the single-player kit checks must be
@@ -1045,6 +1221,134 @@ window.addEventListener('mousedown', (e)=>{
 }, true);
 window.addEventListener('auxclick', (e)=>{ if(listeningForAction) e.preventDefault(); }, true);
 canvas.addEventListener('auxclick', (e)=> e.preventDefault()); // some browsers fire this instead of mousedown for middle-click; scope to the canvas so it doesn't swallow middle-clicks page-wide
+
+// ---------- touch controls ----------
+// A floating analog stick on the left half plus tappable ability tiles on the right. The stick
+// is "floating" rather than fixed: it materialises wherever the thumb lands, because a fixed
+// pad forces the hand to a position it may not naturally rest at on an unfamiliar screen size.
+const touchLayer = document.getElementById('touchLayer');
+const stickEl = document.getElementById('touchStick');
+const stickNubEl = document.getElementById('touchStickNub');
+const stickHintEl = document.getElementById('stickHint');
+const STICK_RADIUS = 66;   // px of travel for a full-speed push
+const STICK_DEADZONE = 10; // ignore micro-jitter so resting a thumb doesn't drift the ship
+let stickTouchId = null;
+const STICK_USED_KEY = 'pulseArenaStickUsed';
+let stickEverUsed = store.get(STICK_USED_KEY) === '1';
+
+// which ability tile maps to which action
+const TOUCH_ABILITY_BUTTONS = [
+  ['abJump', 'jump'], ['abDash', 'ability3'], ['abSlow', 'ability2'],
+  ['abWall', 'ability1'], ['abNova', 'ability4'], ['abDecoy', 'ability5']
+];
+
+function setStickVisual(active, ox, oy, dx, dy){
+  stickEl.classList.toggle('active', active);
+  if(!active) return;
+  stickEl.style.left = ox+'px';
+  stickEl.style.top = oy+'px';
+  stickNubEl.style.transform = 'translate('+dx+'px,'+dy+'px)';
+}
+
+function releaseStick(){
+  stickTouchId = null;
+  touchStickVec.active = false;
+  touchStickVec.x = 0; touchStickVec.y = 0;
+  setStickVisual(false);
+  stickNubEl.style.transform = '';
+}
+
+// the right half of the screen belongs to the ability tiles; the stick only claims a touch
+// that starts on the left, so a thumb reaching for Dash never yanks the ship sideways
+function isStickZone(x){ return x < window.innerWidth*0.5; }
+
+function updateStickFrom(touch){
+  const ox = parseFloat(stickEl.style.left)||0, oy = parseFloat(stickEl.style.top)||0;
+  let dx = touch.clientX - ox, dy = touch.clientY - oy;
+  const len = Math.hypot(dx, dy);
+  if(len > STICK_RADIUS){ dx = dx/len*STICK_RADIUS; dy = dy/len*STICK_RADIUS; }
+  setStickVisual(true, ox, oy, dx, dy);
+  if(len < STICK_DEADZONE){
+    touchStickVec.active = false; touchStickVec.x = 0; touchStickVec.y = 0;
+  } else {
+    // direction only — the game's movement is already a fixed speed in a chosen direction,
+    // so pushing the stick further doesn't (and shouldn't) move you faster
+    const n = Math.hypot(dx, dy) || 1;
+    touchStickVec.active = true;
+    touchStickVec.x = dx/n; touchStickVec.y = dy/n;
+  }
+}
+
+function onTouchStart(e){
+  if(!touchOwnsInput()) return;
+  for(const t of e.changedTouches){
+    // a touch that lands on a button is that button's business, not the stick's
+    if(t.target.closest && t.target.closest('.ability, .touch-pause')) continue;
+    if(stickTouchId===null && isStickZone(t.clientX)){
+      stickTouchId = t.identifier;
+      setStickVisual(true, t.clientX, t.clientY, 0, 0);
+      updateStickFrom(t);
+      if(!stickEverUsed){
+        stickEverUsed = true;
+        store.set(STICK_USED_KEY, '1');
+        stickHintEl.classList.add('hidden');
+      }
+    }
+  }
+}
+
+function onTouchMove(e){
+  if(stickTouchId===null) return;
+  for(const t of e.changedTouches) if(t.identifier===stickTouchId) updateStickFrom(t);
+}
+
+function onTouchEnd(e){
+  for(const t of e.changedTouches) if(t.identifier===stickTouchId) releaseStick();
+}
+
+if(isTouchDevice){
+  // non-passive so preventDefault can stop the page from scrolling/zooming under the game
+  const opts = { passive:false };
+  touchLayer.addEventListener('touchstart', (e)=>{ e.preventDefault(); onTouchStart(e); }, opts);
+  touchLayer.addEventListener('touchmove', (e)=>{ e.preventDefault(); onTouchMove(e); }, opts);
+  touchLayer.addEventListener('touchend', onTouchEnd, opts);
+  touchLayer.addEventListener('touchcancel', onTouchEnd, opts);
+  // the layer only covers the canvas, so the stick also needs the canvas itself
+  canvas.addEventListener('touchstart', (e)=>{ e.preventDefault(); onTouchStart(e); }, opts);
+  canvas.addEventListener('touchmove', (e)=>{ e.preventDefault(); onTouchMove(e); }, opts);
+  canvas.addEventListener('touchend', onTouchEnd, opts);
+  canvas.addEventListener('touchcancel', onTouchEnd, opts);
+
+  for(const [id, action] of TOUCH_ABILITY_BUTTONS){
+    const el = document.getElementById(id);
+    el.addEventListener('touchstart', (e)=>{
+      e.preventDefault();
+      if(!touchOwnsInput()) return;
+      ensureAudio();
+      touchHeld[action] = true;
+      touchEdge[action] = true;
+      el.classList.add('pressed');
+    }, opts);
+    const up = (e)=>{ e.preventDefault(); touchHeld[action] = false; el.classList.remove('pressed'); };
+    el.addEventListener('touchend', up, opts);
+    el.addEventListener('touchcancel', up, opts);
+  }
+
+  document.getElementById('touchPauseBtn').addEventListener('click', ()=>{
+    if(state==='playing' && !tutorialActive && !multiUpgradeActive) setPaused(!paused);
+  });
+
+  if(stickEverUsed) stickHintEl.classList.add('hidden');
+}
+
+// the control layer is only up during live single-player play — it would sit over the menus,
+// and its stick would fight the two-player HUD during a match
+function updateTouchLayer(){
+  if(!isTouchDevice) return;
+  const show = state==='playing' && !paused && !multi() && !multiUpgradeActive;
+  if(!show && stickTouchId!==null) releaseStick(); // don't strand a held direction across a pause
+  touchLayer.classList.toggle('active', show);
+}
 
 // ---------- utility ----------
 function dist(x1,y1,x2,y2){ const dx=x2-x1, dy=y2-y1; return Math.sqrt(dx*dx+dy*dy); }
@@ -3773,6 +4077,9 @@ function updatePlayer(dt){
   if(isActionDown('moveDown')) my+=1;
   if(isActionDown('moveLeft')) mx-=1;
   if(isActionDown('moveRight')) mx+=1;
+  // the virtual stick supplies a direction the four-way keys can't express, so it replaces
+  // them outright while held rather than being summed in and quantised back to 8 directions
+  if(touchOwnsInput() && touchStickVec.active){ mx = touchStickVec.x; my = touchStickVec.y; }
   const mlen = Math.hypot(mx,my);
   if(mlen>0){ mx/=mlen; my/=mlen; }
 
@@ -5113,6 +5420,7 @@ function frame(now){
   if(tutorialActive && !tutorialFrozen) updateTutorial(dt);
   updateMusic();
   updateHud();
+  updateTouchLayer();
   render();
   requestAnimationFrame(frame);
 }
