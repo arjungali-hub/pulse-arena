@@ -599,10 +599,13 @@
     .panel, .panel.wide{ max-width:100%; padding:16px 12px; }
     .title{ font-size:34px; }
     .subtitle{ font-size:12px; margin-bottom:14px; }
-    .mode-cards{ grid-template-columns:1fr; gap:12px; }
-    .mode-card{ padding:16px 16px; }
-    .mode-card-title{ font-size:20px; }
-    .mode-card-features{ line-height:1.6; }
+    .mode-cards{ grid-template-columns:1fr; gap:10px; margin-top:10px; }
+    .mode-card{ padding:13px 15px; }
+    .mode-card-title{ font-size:19px; margin-bottom:3px; }
+    .mode-card-desc{ margin-bottom:8px; }
+    .mode-card-features{ line-height:1.5; font-size:12px; }
+    .mode-card-stat:not(:empty){ margin-top:9px; padding-top:8px; }
+    .kbd-only-badge{ margin-top:9px; padding-top:8px; }
     .cta{ font-size:14px; padding:12px 22px; }
     .cta.ghost{ font-size:12px; padding:10px 18px; }
     /* touch targets: 44px is the floor at which a finger reliably hits what it aimed at */
@@ -631,19 +634,33 @@
     .settings-row{ flex-wrap:wrap; gap:10px; }
     .settings-row input[type=range]{ max-width:none; flex:1 1 140px; }
   }
-  /* landscape phones are short, not narrow — the constraint is vertical */
-  @media (max-height:480px){
+  /* landscape phones are short, not narrow — the constraint is vertical. The whole menu has
+     to clear ~390px including the footer buttons, or a player never discovers Settings
+     without guessing that the screen scrolls. */
+  @media (max-height:560px){
     .overlay{ padding:10px; }
-    .title{ font-size:26px; margin-bottom:0; }
-    .subtitle{ margin-bottom:8px; }
-    .note{ margin:2px 0 10px; }
-    .mode-cards{ grid-template-columns:repeat(2,1fr); gap:8px; }
+    .title{ font-size:24px; margin-bottom:0; }
+    .subtitle{ font-size:11px; margin-bottom:8px; }
+    .note{ margin:2px 0 10px; font-size:11.5px; }
+    .mode-cards{ grid-template-columns:repeat(2,1fr); gap:8px; margin-top:8px; }
     .mode-card{ padding:10px 12px; }
-    .mode-card-title{ font-size:16px; margin-bottom:2px; }
-    .mode-card-desc{ font-size:11px; margin-bottom:6px; }
-    .mode-card-features{ font-size:10.5px; line-height:1.45; }
-    .go-time{ font-size:34px; }
+    .mode-card-title{ font-size:17px; margin-bottom:2px; }
+    .mode-card-desc{ font-size:11.5px; margin-bottom:0; line-height:1.35; }
+    /* the bullets are the first thing to go: the mode name and its one-line description
+       already say what the mode is, and HOW TO PLAY carries the detail */
+    .mode-card-features{ display:none; }
+    .mode-card-stat:not(:empty){ margin-top:7px; padding-top:6px; font-size:11.5px; }
+    .kbd-only-badge{ margin-top:7px; padding-top:6px; font-size:10.5px; }
+    .cta{ font-size:13px; padding:9px 18px; min-height:38px; }
+    .cta.ghost{ font-size:11px; padding:8px 14px; min-height:36px; margin-top:6px; }
+    .go-time{ font-size:32px; }
+    .go-time.star-row .star-slot{ font-size:32px; }
     .result-title{ font-size:22px; }
+    .instructions{ margin:8px 0 4px; gap:10px; }
+    .instr .d{ font-size:11px; }
+    .level-grid{ gap:6px; }
+    .settings-list{ margin:10px 0 4px; gap:8px; }
+    .settings-row{ padding:8px 12px; }
   }
   .upgrade-item{
     background:rgba(10,14,26,.78); border:1.5px solid rgba(255,255,255,.14); border-radius:10px;
@@ -727,7 +744,7 @@
         <div class="mode-card-desc">Destroy the core to clear all 20 levels.</div>
         <ul class="mode-card-features">
           <li>Sever shots to damage the core</li>
-          <li>Unlock new abilities (Q, F, R)</li>
+          <li id="levelsAbilityFeature">Unlock new abilities (Q, F, R)</li>
           <li>Star ratings for fast clears</li>
         </ul>
         <div class="mode-card-stat" id="levelsProgressStat"></div>
@@ -5603,6 +5620,7 @@ if(isTouchDevice){
   document.getElementById('levelSelectBtn').textContent = 'LEVEL SELECT';
   document.getElementById('resumeBtn').textContent = 'RESUME';
   document.getElementById('upgradePrompt').textContent = 'Tap a card to choose.';
+  document.getElementById('levelsAbilityFeature').textContent = 'Unlock new ability buttons';
   // rebinding is a keyboard-only concept; the on-screen buttons aren't remappable
   document.getElementById('controlsBtn').style.display = 'none';
 }
