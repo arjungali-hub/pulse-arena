@@ -9,7 +9,7 @@
  * Bump CACHE_VERSION on every release — the activate handler deletes every other cache, so
  * a version bump is what actually evicts the old build.
  */
-const CACHE_VERSION = 'pulse-arena-v1';
+const CACHE_VERSION = 'pulse-arena-v2';
 
 const PRECACHE = [
   './',

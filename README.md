@@ -4,7 +4,7 @@ A neon twin-stick survival game that runs in any browser. A pulsing core at the 
 
 ![Pulse Arena](social-card.png)
 
-**[▶ Play it](https://pulse-arena.vercel.app/)**
+**[▶ Play it](https://pulse-arena-0.vercel.app/)**
 
 ---
 

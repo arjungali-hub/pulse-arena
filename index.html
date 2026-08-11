@@ -14,14 +14,26 @@
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
 
+<!-- Vercel Web Analytics. Same-origin, no cookies, no consent banner required. Served only
+     when Web Analytics is enabled for the project; if it isn't, this 404s harmlessly and the
+     guarded track() calls below become no-ops rather than throwing. -->
+<script defer src="/_vercel/insights/script.js"></script>
+
+<!-- og:image must be an absolute URL: Discord, Slack, iMessage and X all refuse to resolve a
+     relative path, and the card silently renders with no image at all -->
 <meta property="og:type" content="website" />
+<meta property="og:url" content="https://pulse-arena-0.vercel.app/" />
+<meta property="og:site_name" content="Pulse Arena" />
 <meta property="og:title" content="Pulse Arena" />
 <meta property="og:description" content="A neon twin-stick survival game. Dodge the core, sever its shots, clear 20 levels — or survive forever in Endless." />
-<meta property="og:image" content="social-card.png" />
+<meta property="og:image" content="https://pulse-arena-0.vercel.app/social-card.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Pulse Arena — a glowing orange core at the centre of a neon ring arena, with severed projectiles trailing around it." />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Pulse Arena" />
 <meta name="twitter:description" content="A neon twin-stick survival game. Dodge the core, sever its shots, clear 20 levels — or survive forever in Endless." />
-<meta name="twitter:image" content="social-card.png" />
+<meta name="twitter:image" content="https://pulse-arena-0.vercel.app/social-card.png" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='32' fill='%2305070d'/%3E%3Ccircle cx='32' cy='32' r='26' fill='none' stroke='%235be3ff' stroke-width='3' opacity='0.55'/%3E%3Ccircle cx='32' cy='32' r='16' fill='%23ff8c50'/%3E%3Ccircle cx='32' cy='32' r='7' fill='%23fff7ea'/%3E%3C/svg%3E" />
 <style>
   :root{
@@ -1011,6 +1023,19 @@ const store = {
   remove(k){ try { localStorage.removeItem(k); } catch(e){} }
 };
 
+// ---------- analytics ----------
+// One question this is here to answer: where do players actually stop? Which level they quit
+// on, and whether they finish the tutorial, is not something playtesting yourself can reveal.
+// Deliberately anonymous — no identifiers, no positions, just which beat was reached.
+// Every call is guarded: if Web Analytics isn't enabled on the project, window.va never
+// appears and these silently do nothing rather than throwing mid-run.
+function track(name, data){
+  try {
+    if(testMode) return;            // sandbox runs would poison the numbers
+    if(typeof window.va === 'function') window.va('event', { name, data });
+  } catch(e){}                      // analytics must never be able to break the game
+}
+
 // ---------- touch / device detection ----------
 // coarse pointer + no hover is the reliable "this is a phone or tablet" signal; a touchscreen
 // laptop reports touch support but still has a fine pointer and a real keyboard, and should
@@ -1750,6 +1775,7 @@ function startLevel(n){
   gameMode = 'levels';
   state = 'playing';
   setPaused(false);
+  if(!inTutorialLevel) track('level_start', { level:n });
   currentLevel = n;
   resetRunState();
   resetPlayer(); // upgrades reset every level now — nothing carries over between levels
@@ -1764,6 +1790,7 @@ function startEndless(){
   gameMode = 'endless';
   state = 'playing';
   setPaused(false);
+  track('endless_start');
   endlessBeatBest = false;
   currentLevel = 1;
   resetRunState();
@@ -1809,6 +1836,7 @@ function showLevelSelect(){
 let lastMatch = { family:'pvp', mode:'survival' };
 function startMatch(family, mode){
   lastMatch = { family, mode };
+  track('match_start', { family, mode });
   if(family==='coop') startCoop(mode); else startPvp(mode);
 }
 
@@ -2263,7 +2291,10 @@ function startTutorial(){
   runTutorialStep();
 }
 
-function finishTutorial(){
+// `skipped` distinguishes the Skip link from reaching the end — the drop-off point is the
+// interesting part, so record which step they were on when they bailed
+function finishTutorial(skipped){
+  track('tutorial', { result: skipped===true ? 'skipped' : 'finished', step: tutorialStep+1 });
   store.set(TUTORIAL_SEEN_KEY, '1');
   tutorialActive = false;
   tutorialFrozen = false;
@@ -2335,6 +2366,7 @@ function showResultScreen(){
   if(gameMode==='endless'){
     // endless only ever ends by dying — there's no win state, just a final score
     endlessBeatBest = recordEndlessScore(score);
+    track('endless_end', { score: Math.floor(score), seconds: Math.floor(elapsed) });
     canRetryWin = false;
     document.getElementById('goSubtitle').textContent = 'Endless Mode';
     titleEl.textContent = endlessBeatBest ? 'NEW HIGH SCORE' : 'RUN OVER';
@@ -2367,6 +2399,7 @@ function showResultScreen(){
     // it's always 100% on a win — that's a given, not information. show the star rating
     // this clear actually earned instead, popping in one at a time
     const stars = starsForTime(currentLevel, levelWinElapsed);
+    track('level_end', { level: currentLevel, result:'win', stars, seconds: Math.round(levelWinElapsed) });
     pctEl.className = 'go-time win star-row';
     pctEl.innerHTML = [1,2,3].map(i=>{
       const earned = i<=stars;
@@ -2388,6 +2421,9 @@ function showResultScreen(){
     // its health destroyed — as one readable phrase, and use the second line for a real stat
     // (severs landed) instead of the old bare "complete"
     const pct = Math.max(0, Math.min(100, Math.round((1 - coreHP/coreMaxHP)*100)));
+    // how far they got before dying is the balance signal: a level everyone fails at 15%
+    // is differently broken from one they fail at 95%
+    track('level_end', { level: currentLevel, result:'fail', pct, seconds: Math.floor(elapsed) });
     pctEl.className = 'go-time';
     pctEl.textContent = pct + '% destroyed';
     bestEl.innerHTML = '<b>' + severCount + '</b> sever' + (severCount===1 ? '' : 's') + ' landed';
@@ -2511,7 +2547,7 @@ document.getElementById('closeHowToPlayBtn').addEventListener('click', closeHowT
 document.getElementById('coachBtn').addEventListener('click', ()=>{
   if(tutorialActive && !TUT_STEPS[tutorialStep].wait) advanceTutorial();
 });
-document.getElementById('coachSkip').addEventListener('click', finishTutorial);
+document.getElementById('coachSkip').addEventListener('click', ()=> finishTutorial(true));
 
 // single owner of every test-mode side effect: the flag, the menu button, the in-run badge,
 // the level grid (test mode unlocks all levels) and the upgrade panel. Anything that turns
