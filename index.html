@@ -12,6 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Pulse Arena" />
 <link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
 
 <meta property="og:type" content="website" />
 <meta property="og:title" content="Pulse Arena" />
@@ -5617,6 +5618,15 @@ if(new URLSearchParams(location.search).get('test') === '1'){
 // on demand via the HOW TO PLAY button
 if(store.get(TUTORIAL_SEEN_KEY)) showMenu();
 else startTutorial();
+
+// offline support + "add to home screen". Registration only works over http(s), so opening
+// index.html straight off the disk simply skips it — the game itself needs no network either
+// way, and a failure here must never take the page down with it.
+if('serviceWorker' in navigator && location.protocol.startsWith('http')){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  });
+}
 
 })();
 </script>
