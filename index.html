@@ -357,7 +357,15 @@
     width:16px; height:16px; border:none; border-radius:50%; background:var(--cyan); box-shadow:0 0 10px -1px var(--cyan); cursor:pointer;
   }
   .settings-val{ font-size:13px; color:var(--dim); min-width:44px; text-align:right; font-variant-numeric:tabular-nums; }
-  .settings-toggle{ min-width:74px; }
+  .settings-toggle{ min-width:74px; margin-top:0; }
+  /* progress wipe sits below a divider and behind a confirm step — it's the one irreversible
+     control on the screen, so it must not look like the toggles above it */
+  .settings-danger{ margin-top:18px; padding-top:16px; border-top:1px solid rgba(255,255,255,.08); }
+  .settings-danger .cta.ghost{ margin-top:0; }
+  .cta.ghost.danger{ border-color:rgba(255,74,94,.5); color:var(--red); }
+  .cta.ghost.danger:hover{ background:rgba(255,74,94,.12); }
+  .settings-danger-confirm{ font-size:12.5px; color:var(--dim); line-height:1.5; margin-top:12px; }
+  .settings-danger-confirm.hidden{ display:none; }
   .bind-list{ display:flex; flex-direction:column; gap:8px; margin:18px 0; text-align:left; }
   .bind-row{
     display:flex; align-items:center; justify-content:space-between; gap:14px;
@@ -921,12 +929,30 @@
         <span class="settings-val" id="volumeVal">100%</span>
       </div>
       <div class="settings-row">
+        <label for="musicToggle">Music</label>
+        <button class="cta ghost settings-toggle" id="musicToggle">ON</button>
+      </div>
+      <div class="settings-row">
         <label for="reduceMotionToggle">Reduce flashing &amp; shake</label>
         <button class="cta ghost settings-toggle" id="reduceMotionToggle">OFF</button>
       </div>
+      <div class="settings-row" id="fullscreenRow">
+        <label for="fullscreenToggle">Fullscreen</label>
+        <button class="cta ghost settings-toggle" id="fullscreenToggle">OFF</button>
+      </div>
     </div>
-    <div class="note" style="margin:6px 0 18px;">Reduce flashing dampens the screen flash, shake, and RGB-split effects — recommended if you're sensitive to flashing lights.</div>
-    <button class="cta" id="closeSettingsBtn" style="min-width:200px;">BACK</button>
+    <div class="note" style="margin:6px 0 14px;">Reduce flashing dampens the screen flash, shake, and RGB-split effects — recommended if you're sensitive to flashing lights.</div>
+    <div class="settings-danger">
+      <button class="cta ghost" id="resetProgressBtn">RESET ALL PROGRESS</button>
+      <div class="settings-danger-confirm hidden" id="resetConfirm">
+        Erase every unlocked level, star, and your Endless best? This can't be undone.
+        <div style="display:flex; gap:10px; justify-content:center; margin-top:10px; flex-wrap:wrap;">
+          <button class="cta ghost danger" id="resetConfirmYes">YES, ERASE IT</button>
+          <button class="cta ghost" id="resetConfirmNo">CANCEL</button>
+        </div>
+      </div>
+    </div>
+    <button class="cta" id="closeSettingsBtn" style="min-width:200px; margin-top:16px;">BACK</button>
   </div>
 </div>
 
@@ -1175,6 +1201,9 @@ window.addEventListener('keydown', (e)=>{
   keys[k] = true;
   // during a coach message beat, Enter advances the walkthrough (Space stays a game key)
   if(tutorialActive && k==='enter' && !TUT_STEPS[tutorialStep].wait){ advanceTutorial(); return; }
+  // Escape backs out of whichever menu is open, not just the pause screen — every one of these
+  // has a BACK button, and Escape not matching it was a small constant friction
+  if(k==='escape' && dismissTopOverlay()) return;
   if(k==='escape' && state==='playing' && !tutorialActive && !multiUpgradeActive){ setPaused(!paused); return; }
   if(state==='levelup'){
     if(k==='z') choosePendingUpgrade(0);
@@ -1194,13 +1223,28 @@ window.addEventListener('keyup', (e)=>{
   const k = e.key.toLowerCase();
   keys[k] = false;
 });
-window.addEventListener('blur', ()=>{
+// alt-tabbing away shouldn't leave the sim running at throttled rAF — you could die
+// off-screen. Pause a live run (but not the tutorial or an open upgrade pick, which are
+// already frozen and have no death risk, and whose overlays would just stack awkwardly).
+function releaseAllInputAndPause(){
   for(const k in keys) keys[k]=false;
   for(const k in pressedEdge) pressedEdge[k]=false;
-  // alt-tabbing away shouldn't leave the sim running at throttled rAF — you could die
-  // off-screen. Pause a live run (but not the tutorial or an open upgrade pick, which are
-  // already frozen and have no death risk, and whose overlays would just stack awkwardly).
+  for(const a in touchHeld) touchHeld[a]=false;
+  for(const a in touchEdge) touchEdge[a]=false;
+  releaseStick();
   if(state==='playing' && !paused && !tutorialActive && !multiUpgradeActive) setPaused(true);
+}
+window.addEventListener('blur', releaseAllInputAndPause);
+// mobile browsers do not reliably fire `blur` when you switch apps or lock the screen —
+// visibilitychange is the signal that actually arrives, and without it a phone player comes
+// back to a run that kept simulating (or, worse, ended) while the screen was off
+document.addEventListener('visibilitychange', ()=>{
+  if(document.hidden){
+    releaseAllInputAndPause();
+  } else if(audioCtx && audioCtx.state === 'suspended' && !musicMuted){
+    // iOS suspends the audio context on backgrounding and does not resume it on return
+    audioCtx.resume();
+  }
 });
 
 // mouse buttons feed the same keys/pressedEdge maps as keyboard keys, as virtual keys
@@ -1638,6 +1682,25 @@ function resetRunState(){
 // overlay can survive a state change and stack on top of another.
 function hideAllOverlays(){
   document.querySelectorAll('.overlay:not(#pauseOverlay)').forEach(o=>o.classList.add('hidden'));
+}
+
+// Escape backs out of the frontmost dismissible menu, mirroring whatever its BACK button does.
+// Ordered innermost-first so Settings-opened-from-Pause returns to Pause rather than the menu.
+// Returns true if it consumed the keypress.
+const ESC_DISMISS = [
+  ['settingsOverlay',  ()=> closeSettings()],
+  ['controlsOverlay',  ()=> hideControls()],
+  ['howToPlayOverlay', ()=> closeHowToPlay()],
+  ['pvpOverlay',       ()=> showMenu()],
+  ['coopOverlay',      ()=> showMenu()],
+  ['levelSelectOverlay', ()=> showMenu()]
+];
+function dismissTopOverlay(){
+  if(listeningForAction) return false; // a live rebind owns Escape as its cancel key
+  for(const [id, close] of ESC_DISMISS){
+    if(!document.getElementById(id).classList.contains('hidden')){ close(); return true; }
+  }
+  return false;
 }
 
 function startLevel(n){
@@ -2322,10 +2385,11 @@ document.getElementById('howToPlayBtn').addEventListener('click', ()=>{
   document.getElementById('menuOverlay').classList.add('hidden');
   document.getElementById('howToPlayOverlay').classList.remove('hidden');
 });
-document.getElementById('closeHowToPlayBtn').addEventListener('click', ()=>{
+function closeHowToPlay(){
   document.getElementById('howToPlayOverlay').classList.add('hidden');
   document.getElementById('menuOverlay').classList.remove('hidden');
-});
+}
+document.getElementById('closeHowToPlayBtn').addEventListener('click', closeHowToPlay);
 document.getElementById('coachBtn').addEventListener('click', ()=>{
   if(tutorialActive && !TUT_STEPS[tutorialStep].wait) advanceTutorial();
 });
@@ -3355,16 +3419,30 @@ function updateMusic(){
 // ---------- settings screen ----------
 const volumeSlider = document.getElementById('volumeSlider');
 const volumeVal = document.getElementById('volumeVal');
+const musicToggle = document.getElementById('musicToggle');
 const reduceMotionToggle = document.getElementById('reduceMotionToggle');
+const fullscreenToggle = document.getElementById('fullscreenToggle');
+const resetConfirm = document.getElementById('resetConfirm');
+
+function isFullscreen(){ return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+
 function syncSettingsUI(){
   volumeSlider.value = Math.round(masterVolume*100);
   volumeVal.textContent = Math.round(masterVolume*100) + '%';
+  // music is its own switch again — volume 0 silences everything, but muting the soundtrack
+  // while keeping the death cue audible is a separate thing to want
+  musicToggle.textContent = musicMuted ? 'OFF' : 'ON';
+  musicToggle.classList.toggle('on', !musicMuted);
   reduceMotionToggle.textContent = reduceMotion ? 'ON' : 'OFF';
   reduceMotionToggle.classList.toggle('on', reduceMotion);
+  fullscreenToggle.textContent = isFullscreen() ? 'ON' : 'OFF';
+  fullscreenToggle.classList.toggle('on', isFullscreen());
 }
+
 let settingsReturnToPause = false; // remember whether Settings was opened from the pause menu
 function showSettings(fromPause){
   settingsReturnToPause = !!fromPause;
+  resetConfirm.classList.add('hidden'); // never reopen already armed
   syncSettingsUI();
   document.getElementById('menuOverlay').classList.add('hidden');
   document.getElementById('pauseOverlay').classList.add('hidden');
@@ -3373,22 +3451,73 @@ function showSettings(fromPause){
 function closeSettings(){
   document.getElementById('settingsOverlay').classList.add('hidden');
   if(settingsReturnToPause) document.getElementById('pauseOverlay').classList.remove('hidden');
-  else document.getElementById('menuOverlay').classList.remove('hidden');
+  else { renderMenuStats(); document.getElementById('menuOverlay').classList.remove('hidden'); }
 }
+function settingsOpen(){ return !document.getElementById('settingsOverlay').classList.contains('hidden'); }
+
 document.getElementById('settingsBtn').addEventListener('click', ()=> showSettings(false));
 document.getElementById('closeSettingsBtn').addEventListener('click', closeSettings);
+
 volumeSlider.addEventListener('input', ()=>{
   ensureAudio(); // interacting counts as a user gesture — start the context if it wasn't yet
   if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-  const v = (parseInt(volumeSlider.value,10)||0)/100;
-  setMasterVolume(v);
-  setMusicMuted(v <= 0); // dragging to zero mutes; anything above un-mutes
-  volumeVal.textContent = Math.round(v*100) + '%';
+  setMasterVolume((parseInt(volumeSlider.value,10)||0)/100);
+  volumeVal.textContent = Math.round(masterVolume*100) + '%';
+});
+musicToggle.addEventListener('click', ()=>{
+  ensureAudio();
+  if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  setMusicMuted(!musicMuted);
+  syncSettingsUI();
 });
 reduceMotionToggle.addEventListener('click', ()=>{
   setReduceMotion(!reduceMotion);
   syncSettingsUI();
 });
+
+// fullscreen matters most on mobile, where the browser chrome eats a third of a short screen
+fullscreenToggle.addEventListener('click', ()=>{
+  const el = document.documentElement;
+  if(isFullscreen()){
+    (document.exitFullscreen || document.webkitExitFullscreen || function(){}).call(document);
+  } else {
+    (el.requestFullscreen || el.webkitRequestFullscreen || function(){}).call(el);
+  }
+  // the change is async and can be refused outright (iOS Safari has no element fullscreen);
+  // re-sync off the event so the label always reflects reality rather than the request
+  setTimeout(syncSettingsUI, 100);
+});
+document.addEventListener('fullscreenchange', syncSettingsUI);
+document.addEventListener('webkitfullscreenchange', syncSettingsUI);
+// iOS Safari has no element fullscreen API at all — hide the row rather than offer a control
+// that silently does nothing (there, "Add to Home Screen" is the real fullscreen path)
+if(!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen)){
+  document.getElementById('fullscreenRow').style.display = 'none';
+}
+
+// ---- progress wipe, behind a confirm step ----
+document.getElementById('resetProgressBtn').addEventListener('click', ()=>{
+  resetConfirm.classList.toggle('hidden');
+});
+document.getElementById('resetConfirmNo').addEventListener('click', ()=>{
+  resetConfirm.classList.add('hidden');
+});
+document.getElementById('resetConfirmYes').addEventListener('click', ()=>{
+  // progress only — deliberately leaves settings (volume, binds, reduce-motion) alone, since
+  // wiping your save shouldn't also undo how you set the game up to play
+  store.remove(UNLOCKED_KEY);
+  store.remove(LEVEL_TIMES_KEY);
+  store.remove(ENDLESS_BEST_KEY);
+  store.remove(TUTORIAL_SEEN_KEY);
+  unlockedLevel = 1;
+  levelBestTimes = {};
+  endlessBest = 0; endlessPrevBest = 0; endlessBeatBest = false;
+  renderLevelGrid();
+  renderMenuStats();
+  resetConfirm.classList.add('hidden');
+  syncSettingsUI();
+});
+
 syncSettingsUI();
 
 // ================= UPGRADES / LEVEL-UP =================
