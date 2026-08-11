@@ -85,3 +85,11 @@ social-card.png         Open Graph / Twitter preview image
 ## Credits
 
 Everything — engine, art, and the procedurally generated soundtrack (24 tracks, synthesised live through the Web Audio API with no audio files) — is original and self-contained.
+
+## Licence
+
+Copyright © 2026 Arjun Gali. **All rights reserved.**
+
+The source is public so you can read it, learn from it, and see how it works. It is **not** licensed for redistribution, modification, or commercial use — there is deliberately no open-source licence here.
+
+If you want to use any part of this, ask me first.
