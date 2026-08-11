@@ -4,7 +4,7 @@ A neon twin-stick survival game that runs in any browser. A pulsing core at the 
 
 ![Pulse Arena](social-card.png)
 
-**[▶ Play it](https://arjungali-hub.github.io/pulse-arena/)**
+**[▶ Play it](https://pulse-arena.vercel.app/)**
 
 ---
 
@@ -58,13 +58,9 @@ Two URL flags help while developing:
 
 ## Deploying
 
-Any static host will serve it. The whole site is `index.html` plus the manifest, icons and service worker.
+Hosted on Vercel, which deploys straight from `main` — there's no build step or output directory to configure, since the whole site is `index.html` plus the manifest, icons and service worker. Any other static host works the same way.
 
-```bash
-# GitHub Pages: Settings -> Pages -> deploy from branch `main`, folder `/ (root)`
-```
-
-Bump `CACHE_VERSION` in [`sw.js`](sw.js) on each release — the activate handler evicts every other cache, so a version bump is what actually pushes the new build out to players who already have it installed.
+**Bump `CACHE_VERSION` in [`sw.js`](sw.js) on every release.** The activate handler deletes every cache that doesn't match, so the version bump is what actually retires the old build. Skip it and anyone who has already loaded the game keeps their cached copy — a green deploy they never see.
 
 ## Progress and settings
 

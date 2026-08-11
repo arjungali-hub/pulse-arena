@@ -230,18 +230,39 @@
 
   /* ---- interactive tutorial coach box (floats over live gameplay, doesn't dim the whole
      screen like a full overlay) ---- */
+  /* Default placement is top-centre, not bottom: the player spawns at the bottom of the arena
+     and spends the early tutorial there, so a bottom-docked box sits exactly where they're
+     looking. layoutCoach() promotes this to a side dock in the gutter beside the arena
+     whenever the window is wide enough for one — see that function for the geometry. */
   .coach{
-    position:fixed; left:50%; bottom:34px; transform:translateX(-50%);
-    width:min(560px, calc(100vw - 40px)); z-index:40;
+    position:fixed; left:50%; top:20px; transform:translateX(-50%);
+    /* kept fairly narrow: in the fallback placement this box is over the arena, so every
+       pixel of width is playfield the player can't see through */
+    width:min(430px, calc(100vw - 40px)); z-index:40;
     padding:18px 22px 16px; border-radius:16px; text-align:center;
-    background:linear-gradient(180deg, rgba(16,22,38,.94), rgba(8,11,20,.96));
+    /* near-opaque: docked to a side it can sit over the HUD readout, and translucency there
+       reads as a rendering fault rather than a deliberate float */
+    background:linear-gradient(180deg, rgba(16,22,38,.985), rgba(8,11,20,.99));
     border:1.5px solid rgba(91,227,255,.4);
     box-shadow:0 12px 40px -8px rgba(0,0,0,.7), 0 0 24px -6px rgba(91,227,255,.3);
     animation:coach-in .28s ease;
   }
+  /* side-docked: JS owns left/top/width, so drop the centring transform and its animation */
+  .coach.side{
+    left:auto; top:auto; transform:none; text-align:left;
+    width:auto; /* set inline from the measured gutter */
+    animation:coach-in-side .28s ease;
+  }
   .coach.hidden{ display:none; }
+  /* An action beat asks the player to actually move/dash/jump, and on touch the stick is
+     summoned by touching the left half — which is where this box may be docked. During those
+     beats the box carries no button, so let input fall straight through it to the game.
+     Skip is the one thing that must stay tappable. */
+  .coach.action{ pointer-events:none; }
+  .coach.action .coach-skip{ pointer-events:auto; }
   .coach.action{ border-color:rgba(255,171,74,.5); box-shadow:0 12px 40px -8px rgba(0,0,0,.7), 0 0 24px -6px rgba(255,171,74,.35); }
   @keyframes coach-in{ from{ opacity:0; transform:translate(-50%, 14px); } to{ opacity:1; transform:translate(-50%, 0); } }
+  @keyframes coach-in-side{ from{ opacity:0; transform:translateX(14px); } to{ opacity:1; transform:translateX(0); } }
   .coach-badge{
     display:inline-block; margin-bottom:8px; padding:3px 12px; border-radius:20px;
     font-size:10px; font-weight:800; letter-spacing:.14em;
@@ -658,6 +679,14 @@
     .result-title{ font-size:22px; }
     .instructions{ margin:8px 0 4px; gap:10px; }
     .instr .d{ font-size:11px; }
+    /* the coach has to fit a ~390px-tall landscape phone beside the arena, not over it */
+    .coach{ padding:12px 14px 10px; border-radius:12px; }
+    .coach-badge{ margin-bottom:5px; padding:2px 9px; font-size:9px; }
+    .coach-title{ font-size:15px; margin-bottom:4px; }
+    .coach-text{ font-size:11.5px; line-height:1.4; }
+    .coach-btn{ margin-top:9px; }
+    .coach-progress{ margin-top:8px; }
+    .coach-wait{ margin-top:8px; font-size:10px; }
     .level-grid{ gap:6px; }
     .settings-list{ margin:10px 0 4px; gap:8px; }
     .settings-row{ padding:8px 12px; }
@@ -1020,6 +1049,7 @@ window.addEventListener('resize', ()=>{
   // phone player gets paused every time they scroll
   const changed = Math.abs(W-prevW) > 24 || Math.abs(H-prevH) > 24;
   if(changed && state==='playing' && !paused) setPaused(true); // mid-run resize can invalidate in-flight positions; pause rather than risk it
+  if(tutorialActive) layoutCoach(); // the gutter it docks into just changed size
 });
 resize();
 
@@ -2091,6 +2121,38 @@ const TUT_STEPS = [
 
 const coachBox = document.getElementById('coachBox');
 
+// The arena is a circle inscribed in the window, so on any wider-than-tall screen there is
+// dead space either side of it. Docking the coach box into that gutter keeps it completely
+// clear of the playfield — the old bottom-centre placement covered the bottom of the arena,
+// which is exactly where the player spawns and spends the early steps.
+// Which gutter depends on where the ability column lives: left on desktop, right on touch.
+const COACH_SIDE_MIN_W = 200;  // below this the box is too narrow to read comfortably
+const COACH_SIDE_MAX_W = 340;
+const COACH_SIDE_MARGIN = 14;
+
+function layoutCoach(){
+  if(coachBox.classList.contains('hidden')) return;
+  const gutter = CX - R;                       // identical on both sides; arena spans CX +/- R
+  const avail = gutter - COACH_SIDE_MARGIN*2;
+  if(avail < COACH_SIDE_MIN_W){
+    // no room beside the arena (portrait, or a near-square window) — fall back to the
+    // top-centre placement the stylesheet defines, which at least isn't over the spawn
+    coachBox.classList.remove('side');
+    coachBox.style.width = ''; coachBox.style.left = ''; coachBox.style.top = '';
+    return;
+  }
+  const w = Math.min(COACH_SIDE_MAX_W, avail);
+  coachBox.classList.add('side');
+  coachBox.style.width = w + 'px';
+  // dock opposite the ability column so the two never fight for the same gutter
+  coachBox.style.left = (isTouchDevice ? COACH_SIDE_MARGIN : Math.round(W - COACH_SIDE_MARGIN - w)) + 'px';
+  // height is only known once the width and this step's text are both applied
+  const h = coachBox.offsetHeight;
+  coachBox.style.top = Math.round(
+    Math.max(COACH_SIDE_MARGIN, Math.min(H - h - COACH_SIDE_MARGIN, (H - h)/2))
+  ) + 'px';
+}
+
 function tutorialArrowPoint(){
   const spec = tutorialArrowSpec;
   if(!spec) return null;
@@ -2134,6 +2196,7 @@ function renderCoachStep(){
     btn.textContent = step.cta || 'GOT IT';
     wait.style.display = 'none';
   }
+  layoutCoach(); // each step's text is a different height, so re-centre after filling it in
 }
 
 function runTutorialStep(){
