@@ -843,14 +843,9 @@
 <div class="overlay hidden" id="howToPlayOverlay">
   <div class="panel wide">
     <div class="title" style="font-size:34px;">HOW TO PLAY</div>
-    <div class="instructions">
-      <div class="instr"><span class="k">WASD</span><div class="d">Move around the arena (arrow keys also work)</div></div>
-      <div class="instr"><span class="k">SPACE</span><div class="d">Jump — hop over <b>ground</b> shots, but locks your direction until you land. A committed dodge, not free movement.</div></div>
-      <div class="instr"><span class="k">SHIFT</span><div class="d">Dash — brief burst of speed with full invulnerability. Can't be used mid-jump.</div></div>
-      <div class="instr"><span class="k">E</span><div class="d">Press to slow every projectile in the arena — it runs until the energy drains out, or press again to cancel early. Energy regenerates on its own over time.</div></div>
-      <div class="instr concept"><span class="k">SEVER</span><div class="d">Levels only — every shot trails a tail behind it; cutting through that tail destroys the shot and chips the core's health.</div></div>
-    </div>
-    <div class="note">Levels: beat the core's health to 0 to win — there's no time limit, just survive long enough to wear it down. Endless: no core to destroy, just survive as long as you can for score. Both modes offer upgrade picks along the way, but upgrades reset at the start of every new level or run. Some upgrades unlock a whole new ability key — Q, F, and R are all locked until you pick them up.</div>
+    <!-- the control captions are rewritten for touch devices at runtime; see renderHowToPlay() -->
+    <div class="instructions" id="howToPlayControls"></div>
+    <div class="note" id="howToPlayNote"></div>
     <button class="cta" id="closeHowToPlayBtn">BACK</button>
   </div>
 </div>
@@ -904,7 +899,7 @@
     <div class="subtitle" style="margin-bottom:6px;" id="levelUpSubtitle">Level 1 — Upgrade 1 of 2</div>
     <div class="title" style="font-size:30px;">CHOOSE AN UPGRADE</div>
     <div class="cards" id="upgradeCards"></div>
-    <div class="note" style="margin-top:18px;">Press Z / X / C, or click a card, to choose.</div>
+    <div class="note" style="margin-top:18px;" id="upgradePrompt">Press Z / X / C, or click a card, to choose.</div>
   </div>
 </div>
 
@@ -2032,23 +2027,35 @@ const tutBaseline = { sever:0, x:0, y:0 };
 //   highlight  — DOM element id to ring while the step is active
 //   feed       — keep spawning gentle practice shots during this action beat
 //   onEnter    — hook fired when the step begins (e.g. spawn a shot, open the upgrade pick)
+// the walkthrough names physical keys, which are meaningless on a phone — every control
+// reference resolves through these so the same script teaches both input methods
+const T_MOVE   = isTouchDevice ? 'drag the <b>stick</b> on the left side of the screen' : 'move around with <span class="k">WASD</span> or the <span class="k">arrow keys</span>';
+const T_JUMP   = isTouchDevice ? 'Tap the <span class="k">Jump</span> button' : 'Press <span class="k">SPACE</span>';
+const T_DASH   = isTouchDevice ? 'Tap the <span class="k">Dash</span> button' : 'Press <span class="k">SHIFT</span>';
+const T_SLOW   = isTouchDevice ? 'Tap the <span class="k">Slow-Mo</span> button' : 'Press <span class="k">E</span>';
+const P_JUMP   = isTouchDevice ? 'Tap Jump to continue' : 'Press SPACE to continue';
+const P_DASH   = isTouchDevice ? 'Tap Dash to continue' : 'Press SHIFT to continue';
+const P_SLOW   = isTouchDevice ? 'Tap Slow-Mo to continue' : 'Press E to continue';
+
 const TUT_STEPS = [
   { badge:'LEVELS MODE', title:'Welcome to Pulse Arena', arrow:'core',
     text:'That pulsing <b>core</b> at the center fires waves of projectiles outward. Your ship weaves through them — and in <b>Levels mode</b>, fights back. Let\'s learn how, hands-on.' },
   { badge:'LEVELS MODE', title:'Move', arrow:'player', wait:'move', waitPrompt:'Move to continue',
-    text:'This is your ship. Get a feel for it — move around with <span class="k">WASD</span> or the <span class="k">arrow keys</span>.' },
+    text:'This is your ship. Get a feel for it — ' + T_MOVE + '.' },
   { badge:'LEVELS MODE', title:'Severing', arrow:'core',
     text:'Every shot drags a glowing <b>tail</b> behind it. Cut through that tail and the shot is destroyed — and the core takes damage. Severing is how you win a level.' },
   { badge:'LEVELS MODE', title:'Sever a Shot', arrow:'proj', wait:'sever', feed:true, waitPrompt:'Sever a shot to continue',
     text:'Here come some shots. Weave your ship through a shot\'s trailing tail to <b>sever</b> it.' },
-  { badge:'LEVELS MODE', title:'Jump', arrow:'player', wait:'jump', feed:true, waitPrompt:'Press SPACE to continue',
-    text:'Shots hug the ground. Press <span class="k">SPACE</span> to <b>jump</b> over them — it locks your direction until you land, so it\'s a committed dodge, not free movement.' },
-  { badge:'LEVELS MODE', title:'Dash', arrow:'player', wait:'dash', feed:true, waitPrompt:'Press SHIFT to continue',
-    text:'Press <span class="k">SHIFT</span> to <b>dash</b> — a quick burst with full invulnerability. You can\'t dash mid-jump.' },
-  { badge:'LEVELS MODE', title:'Slow-Mo', arrow:{el:'abSlow'}, highlight:'abSlow', wait:'slow', feed:true, waitPrompt:'Press E to continue',
-    text:'Press <span class="k">E</span> for <b>Slow-Mo</b> — it slows every shot so you can thread through them or line up a sever. It drains as it runs and recharges on its own.' },
-  { badge:'LEVELS MODE', title:'Upgrades', arrow:{el:'upgradePanel'}, highlight:'upgradePanel',
-    text:'As you play you\'ll earn <b>upgrade picks</b> — some boost your stats, others unlock whole new abilities on <span class="k">Q</span>, <span class="k">F</span>, and <span class="k">R</span>. Here comes your first.' },
+  { badge:'LEVELS MODE', title:'Jump', arrow:{el:'abJump'}, highlight:'abJump', wait:'jump', feed:true, waitPrompt:P_JUMP,
+    text:'Shots hug the ground. ' + T_JUMP + ' to <b>jump</b> over them — it locks your direction until you land, so it\'s a committed dodge, not free movement.' },
+  { badge:'LEVELS MODE', title:'Dash', arrow:{el:'abDash'}, highlight:'abDash', wait:'dash', feed:true, waitPrompt:P_DASH,
+    text:T_DASH + ' to <b>dash</b> — a quick burst with full invulnerability. You can\'t dash mid-jump.' },
+  { badge:'LEVELS MODE', title:'Slow-Mo', arrow:{el:'abSlow'}, highlight:'abSlow', wait:'slow', feed:true, waitPrompt:P_SLOW,
+    text:T_SLOW + ' for <b>Slow-Mo</b> — it slows every shot so you can thread through them or line up a sever. It drains as it runs and recharges on its own.' },
+  { badge:'LEVELS MODE', title:'Upgrades', arrow:{el:isTouchDevice?'abSlow':'upgradePanel'}, highlight:isTouchDevice?null:'upgradePanel',
+    text:'As you play you\'ll earn <b>upgrade picks</b> — some boost your stats, others unlock whole new abilities' +
+      (isTouchDevice ? ', which appear as new buttons in your ability column' : ' on <span class="k">Q</span>, <span class="k">F</span>, and <span class="k">R</span>') +
+      '. Here comes your first.' },
   { title:'Upgrades', hideCoach:true, wait:'pick', onEnter:()=>{ enterLevelUp(); if(state!=='levelup') advanceTutorial(); } }, // if the pool was empty, don't soft-lock behind a hidden coach box
   { badge:'LEVELS MODE', title:'Nice Pick',
     text:'Picks like that recur every so often. Your whole build <b>resets at the start of every level or run</b>, so each attempt is a fresh set of choices.' },
@@ -2235,6 +2242,10 @@ function renderLevelGrid(){
 // a phantom level 21 past the finale)
 function canAdvance(){ return levelWon && currentLevel < MAX_LEVEL; }
 
+// button captions carry their keyboard shortcut in brackets, which is noise on a touch device
+// where the button IS the only way to press it
+function btnLabel(text, keyHint){ return isTouchDevice ? text : text + ' (' + keyHint + ')'; }
+
 function showResultScreen(){
   if(inTutorialLevel) return; // the tutorial never reaches a real result screen — it can't be won or lost
   const titleEl = document.getElementById('goTitle');
@@ -2259,13 +2270,13 @@ function showResultScreen(){
       : survived + ' &middot; best <b>' + formatScore(endlessBest) + '</b>';
     const retryBtn = document.getElementById('retryBtn');
     retryBtn.style.display = '';
-    retryBtn.textContent = 'RETRY (R / SPACE)'; // else it keeps a Levels-win's "RETRY FOR BETTER TIME"
+    retryBtn.textContent = btnLabel('RETRY','R / SPACE'); // else it keeps a Levels-win's "RETRY FOR BETTER TIME"
     document.getElementById('nextLevelBtn').style.display = 'none';
-    lsBtn.textContent = 'MAIN MENU (L)';
+    lsBtn.textContent = btnLabel('MAIN MENU','L');
     document.getElementById('goOverlay').classList.remove('hidden');
     return;
   }
-  lsBtn.textContent = 'LEVEL SELECT (L)';
+  lsBtn.textContent = btnLabel('LEVEL SELECT','L');
   document.getElementById('goSubtitle').textContent = 'Level ' + currentLevel;
   const bestEl = document.getElementById('goBest');
   if(levelWon){
@@ -2286,7 +2297,7 @@ function showResultScreen(){
     canRetryWin = stars<3;
     const retryBtn = document.getElementById('retryBtn');
     retryBtn.style.display = canRetryWin ? '' : 'none';
-    retryBtn.textContent = 'RETRY FOR BETTER TIME (R)';
+    retryBtn.textContent = btnLabel('RETRY FOR BETTER TIME','R');
     document.getElementById('nextLevelBtn').style.display = canAdvance() ? '' : 'none';
   } else {
     canRetryWin = false;
@@ -2301,7 +2312,7 @@ function showResultScreen(){
     bestEl.innerHTML = '<b>' + severCount + '</b> sever' + (severCount===1 ? '' : 's') + ' landed';
     const retryBtn = document.getElementById('retryBtn');
     retryBtn.style.display = '';
-    retryBtn.textContent = 'RETRY (R / SPACE)';
+    retryBtn.textContent = btnLabel('RETRY','R / SPACE');
     document.getElementById('nextLevelBtn').style.display = 'none';
   }
   document.getElementById('goOverlay').classList.remove('hidden');
@@ -2382,9 +2393,35 @@ document.getElementById('resetBindsBtn').addEventListener('click', ()=>{
 updateAbilityKeyLabels();
 
 document.getElementById('howToPlayBtn').addEventListener('click', ()=>{
+  renderHowToPlay();
   document.getElementById('menuOverlay').classList.add('hidden');
   document.getElementById('howToPlayOverlay').classList.remove('hidden');
 });
+// the same four controls with the labels each input method actually uses, so a phone player
+// isn't told to press keys that aren't there. Rebuilt on open so it also picks up rebinds.
+function renderHowToPlay(){
+  const rows = isTouchDevice ? [
+    ['STICK', 'Drag anywhere on the left side of the screen to move — the stick appears under your thumb.'],
+    ['JUMP', 'Hop over <b>ground</b> shots. Locks your direction until you land, so it\'s a committed dodge, not free movement.'],
+    ['DASH', 'A brief burst of speed with full invulnerability. Can\'t be used mid-jump.'],
+    ['SLOW-MO', 'Tap to slow every projectile in the arena — it runs until the energy drains, or tap again to cancel early. Energy regenerates on its own.']
+  ] : [
+    ['WASD', 'Move around the arena (arrow keys also work)'],
+    [keyDisplayName(keybinds.jump[0]), 'Jump — hop over <b>ground</b> shots, but locks your direction until you land. A committed dodge, not free movement.'],
+    [keyDisplayName(keybinds.ability3[0]), 'Dash — brief burst of speed with full invulnerability. Can\'t be used mid-jump.'],
+    [keyDisplayName(keybinds.ability2[0]), 'Press to slow every projectile in the arena — it runs until the energy drains out, or press again to cancel early. Energy regenerates on its own over time.']
+  ];
+  document.getElementById('howToPlayControls').innerHTML =
+    rows.map(([k,d])=>'<div class="instr"><span class="k">'+k+'</span><div class="d">'+d+'</div></div>').join('') +
+    '<div class="instr concept"><span class="k">SEVER</span><div class="d">Levels only — every shot trails a tail behind it; cutting through that tail destroys the shot and chips the core\'s health.</div></div>';
+  document.getElementById('howToPlayNote').innerHTML =
+    'Levels: beat the core\'s health to 0 to win — there\'s no time limit, just survive long enough to wear it down. ' +
+    'Endless: no core to destroy, just survive as long as you can for score. Both modes offer upgrade picks along the way, ' +
+    'but upgrades reset at the start of every new level or run. Some upgrades unlock a whole new ability — ' +
+    (isTouchDevice ? 'Wall, Nova and Decoy appear as new buttons once you pick them up.'
+                   : 'Q, F, and R are all locked until you pick them up.');
+}
+
 function closeHowToPlay(){
   document.getElementById('howToPlayOverlay').classList.add('hidden');
   document.getElementById('menuOverlay').classList.remove('hidden');
@@ -5556,6 +5593,18 @@ function frame(now){
 resetPlayer();
 renderLevelGrid();
 requestAnimationFrame(frame);
+
+// on a touch device the static button captions in the markup still advertise keyboard
+// shortcuts that don't exist there — rewrite them once at startup
+if(isTouchDevice){
+  document.getElementById('retryBtn').textContent = 'RETRY';
+  document.getElementById('nextLevelBtn').textContent = 'NEXT LEVEL';
+  document.getElementById('levelSelectBtn').textContent = 'LEVEL SELECT';
+  document.getElementById('resumeBtn').textContent = 'RESUME';
+  document.getElementById('upgradePrompt').textContent = 'Tap a card to choose.';
+  // rebinding is a keyboard-only concept; the on-screen buttons aren't remappable
+  document.getElementById('controlsBtn').style.display = 'none';
+}
 
 // test mode is a developer tool — only surface its menu button when explicitly asked for via
 // ?test=1, so it never sits in the normal menu next to the real options
