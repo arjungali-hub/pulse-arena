@@ -9,7 +9,7 @@
  * Bump CACHE_VERSION on every release — the activate handler deletes every other cache, so
  * a version bump is what actually evicts the old build.
  */
-const CACHE_VERSION = 'pulse-arena-v2';
+const CACHE_VERSION = 'pulse-arena-v3';
 
 const PRECACHE = [
   './',
@@ -44,9 +44,15 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
+  const url = new URL(req.url);
   // leave cross-origin requests alone entirely — the game makes none, and proxying them
   // through here would only add a failure mode
-  if (new URL(req.url).origin !== self.location.origin) return;
+  if (url.origin !== self.location.origin) return;
+  // Analytics is same-origin only because it is reverse-proxied, so it would otherwise land
+  // in the cache. Serving a stale analytics library helps nobody, and worse, the offline
+  // fallback below would answer a failed beacon with the app shell — handing a 200 of HTML
+  // to something expecting a script. Let these through to the network untouched.
+  if (url.pathname.startsWith('/ingest') || url.pathname.startsWith('/_vercel')) return;
 
   event.respondWith(
     fetch(req)

@@ -72,12 +72,39 @@ Storage access is wrapped in try/catch throughout, so the game still runs (witho
 
 **Settings → Reduce flashing & shake** dampens the screen flash, screen shake, and RGB-split effects. It defaults to on if your OS reports `prefers-reduced-motion`, and sticks once you set it explicitly either way.
 
+## Analytics
+
+Two things, for two different jobs:
+
+- **Vercel Web Analytics** — visitor and page-view counts. Free, zero config, already on.
+- **PostHog** — the gameplay events. Vercel gates custom events behind its Pro plan, and PostHog's free tier (1M events/month) is a better tool for this anyway.
+
+**To switch PostHog on**, set `POSTHOG_KEY` in `index.html` to your project's Public API key (it starts `phc_`). That key is designed to ship in client code — it can write events and nothing else, so committing it is fine. While it's blank, every `track()` call silently does nothing and the game is unaffected.
+
+PostHog is served through a **reverse proxy**: `vercel.json` rewrites `/ingest/*` to PostHog's servers so the requests are first-party. Blocklists match the vendor domain rather than the behaviour, so this is what keeps analytics working for the large share of a gaming audience running an ad-blocker. If your PostHog project is in the EU region, change `us` → `eu` in **both** `vercel.json` destinations and in `POSTHOG_REGION` — a mismatch fails silently.
+
+The service worker deliberately skips `/ingest` and `/_vercel`, so analytics never gets cached and a failed beacon can't be answered with the app shell.
+
+Events sent — all numeric values are **banded into labelled ranges** before sending, because analytics dashboards count events grouped by property value rather than aggregating numbers, and raw values would produce thousands of unique one-count rows:
+
+| Event | Properties |
+|---|---|
+| `tutorial` | `result` (finished/skipped), `step` |
+| `level_start` | `level` |
+| `level_end` | `level`, `result` (win/fail), `stars` or `depth`, `took` |
+| `endless_start` | — |
+| `endless_end` | `score`, `survived` |
+| `match_start` | `family`, `mode` |
+
+`depth` is the balance signal: failures clustering at `0-25%` mean a level is too hard too early; clustering at `90-99%` means a war of attrition that wants less core HP. Test-mode runs are excluded so they can't skew anything.
+
 ## Project layout
 
 ```
 index.html              the entire game — markup, styles, and engine
 manifest.webmanifest    PWA metadata for install / add-to-home-screen
 sw.js                   service worker; network-first, cache as offline fallback
+vercel.json             reverse proxy so analytics is served first-party
 icon*.png, icon.svg     app icons, including a maskable variant
 social-card.png         Open Graph / Twitter preview image
 ```
