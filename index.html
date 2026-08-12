@@ -1043,6 +1043,20 @@ function track(name, data){
   } catch(e){}                      // analytics must never be able to break the game
 }
 
+// Analytics dashboards count events grouped by property VALUE — they don't aggregate numbers.
+// Sending `pct: 37` makes almost every event unique, so the dashboard shows a thousand
+// one-count rows instead of a distribution, and high-cardinality properties are the first
+// thing these tools cap. Banding the number first turns "how far did people get" into a
+// plain count per band, which is exactly what the dashboard is good at rendering.
+// Bands are [exclusiveUpperBound, label], first match wins; last must be Infinity.
+function band(v, bands){
+  for(const [max, label] of bands) if(v < max) return label;
+  return bands[bands.length-1][1];
+}
+const DEPTH_BANDS = [[25,'0-25%'], [50,'25-50%'], [75,'50-75%'], [90,'75-90%'], [Infinity,'90-99%']];
+const TIME_BANDS  = [[15,'0-15s'], [30,'15-30s'], [60,'30-60s'], [120,'60-120s'], [300,'2-5m'], [Infinity,'5m+']];
+const SCORE_BANDS = [[1000,'0-1k'], [5000,'1k-5k'], [15000,'5k-15k'], [50000,'15k-50k'], [Infinity,'50k+']];
+
 // ---------- touch / device detection ----------
 // coarse pointer + no hover is the reliable "this is a phone or tablet" signal; a touchscreen
 // laptop reports touch support but still has a fine pointer and a real keyboard, and should
@@ -1782,7 +1796,7 @@ function startLevel(n){
   gameMode = 'levels';
   state = 'playing';
   setPaused(false);
-  if(!inTutorialLevel) track('level_start', { level:n });
+  if(!inTutorialLevel) track('level_start', { level: String(n) });
   currentLevel = n;
   resetRunState();
   resetPlayer(); // upgrades reset every level now — nothing carries over between levels
@@ -2301,7 +2315,7 @@ function startTutorial(){
 // `skipped` distinguishes the Skip link from reaching the end — the drop-off point is the
 // interesting part, so record which step they were on when they bailed
 function finishTutorial(skipped){
-  track('tutorial', { result: skipped===true ? 'skipped' : 'finished', step: tutorialStep+1 });
+  track('tutorial', { result: skipped===true ? 'skipped' : 'finished', step: String(tutorialStep+1) });
   store.set(TUTORIAL_SEEN_KEY, '1');
   tutorialActive = false;
   tutorialFrozen = false;
@@ -2373,7 +2387,7 @@ function showResultScreen(){
   if(gameMode==='endless'){
     // endless only ever ends by dying — there's no win state, just a final score
     endlessBeatBest = recordEndlessScore(score);
-    track('endless_end', { score: Math.floor(score), seconds: Math.floor(elapsed) });
+    track('endless_end', { score: band(score, SCORE_BANDS), survived: band(elapsed, TIME_BANDS) });
     canRetryWin = false;
     document.getElementById('goSubtitle').textContent = 'Endless Mode';
     titleEl.textContent = endlessBeatBest ? 'NEW HIGH SCORE' : 'RUN OVER';
@@ -2406,7 +2420,8 @@ function showResultScreen(){
     // it's always 100% on a win — that's a given, not information. show the star rating
     // this clear actually earned instead, popping in one at a time
     const stars = starsForTime(currentLevel, levelWinElapsed);
-    track('level_end', { level: currentLevel, result:'win', stars, seconds: Math.round(levelWinElapsed) });
+    // level is the grouping key, so it stays raw — 20 values is a readable breakdown
+    track('level_end', { level: String(currentLevel), result:'win', stars: String(stars), took: band(levelWinElapsed, TIME_BANDS) });
     pctEl.className = 'go-time win star-row';
     pctEl.innerHTML = [1,2,3].map(i=>{
       const earned = i<=stars;
@@ -2430,7 +2445,9 @@ function showResultScreen(){
     const pct = Math.max(0, Math.min(100, Math.round((1 - coreHP/coreMaxHP)*100)));
     // how far they got before dying is the balance signal: a level everyone fails at 15%
     // is differently broken from one they fail at 95%
-    track('level_end', { level: currentLevel, result:'fail', pct, seconds: Math.floor(elapsed) });
+    // `depth` is the balance signal: failing at 0-25% means too hard too early, failing at
+    // 90-99% means a war of attrition that wants less core HP. Opposite fixes, same symptom.
+    track('level_end', { level: String(currentLevel), result:'fail', depth: band(pct, DEPTH_BANDS), took: band(elapsed, TIME_BANDS) });
     pctEl.className = 'go-time';
     pctEl.textContent = pct + '% destroyed';
     bestEl.innerHTML = '<b>' + severCount + '</b> sever' + (severCount===1 ? '' : 's') + ' landed';
