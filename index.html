@@ -14,9 +14,15 @@
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
 
-<!-- Vercel Web Analytics. Same-origin, no cookies, no consent banner required. Served only
-     when Web Analytics is enabled for the project; if it isn't, this 404s harmlessly and the
-     guarded track() calls below become no-ops rather than throwing. -->
+<!-- Vercel Web Analytics. Same-origin, no cookies, no consent banner required.
+     This is the hand-rolled equivalent of @vercel/analytics' inject(): that package only
+     appends the same script tag and defines the same window.va queue stub. Doing it inline
+     keeps the game a single dependency-free file with no build step, which the npm route
+     would otherwise force us to give up.
+     The stub queues any event fired before the script finishes loading; once it loads, the
+     real va() drains the queue. If Web Analytics is not enabled the script 404s, events sit
+     harmlessly in the array, and nothing throws. -->
+<script>window.va = window.va || function(){ (window.vaq = window.vaq || []).push(arguments); };</script>
 <script defer src="/_vercel/insights/script.js"></script>
 
 <!-- og:image must be an absolute URL: Discord, Slack, iMessage and X all refuse to resolve a
@@ -1027,8 +1033,9 @@ const store = {
 // One question this is here to answer: where do players actually stop? Which level they quit
 // on, and whether they finish the tutorial, is not something playtesting yourself can reveal.
 // Deliberately anonymous — no identifiers, no positions, just which beat was reached.
-// Every call is guarded: if Web Analytics isn't enabled on the project, window.va never
-// appears and these silently do nothing rather than throwing mid-run.
+// Every call is guarded: window.va is the queue stub defined in <head> until the real script
+// loads, and if Web Analytics is disabled the events simply sit in that queue forever.
+// Nothing here may ever throw into the game loop.
 function track(name, data){
   try {
     if(testMode) return;            // sandbox runs would poison the numbers
