@@ -1052,7 +1052,16 @@ window.addEventListener('load', ()=>{
       persistence: 'localStorage',        // no cookies, so no consent banner needed
       person_profiles: 'identified_only', // players are anonymous; profiles would burn quota
       autocapture: false,                 // we send deliberate events; DOM autocapture would bury them
-      capture_pageview: true
+      capture_pageview: true,
+      // Session replay records the DOM, and this game's entire playfield is a <canvas> it
+      // cannot see into — every recording would be a still frame of a menu. It is also the
+      // single biggest consumer of the free tier, so it is pure cost here.
+      disable_session_recording: true,
+      disable_surveys: true,
+      capture_dead_clicks: false,         // one full-screen canvas reads as dead clicks everywhere
+      // Exception capture stays ON deliberately: this is the only way to hear about a JS
+      // error a real player hits on a device we never tested.
+      capture_exceptions: true
     });
     analyticsReady = true;
   } catch(e){}                            // a broken analytics load must never block the game
