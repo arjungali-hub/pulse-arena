@@ -307,6 +307,15 @@
     color:var(--orange); text-transform:uppercase; animation:coach-wait-pulse 1.1s ease-in-out infinite;
   }
   @keyframes coach-wait-pulse{ 0%,100%{ opacity:.5; } 50%{ opacity:1; } }
+  /* practice-window timer bar */
+  .coach-hold{ margin-top:10px; height:4px; border-radius:3px; overflow:hidden;
+    background:rgba(255,255,255,.12); }
+  .coach-hold.hidden{ display:none; }
+  .coach-hold-fill{ height:100%; width:100%; border-radius:3px;
+    background:var(--green); box-shadow:0 0 8px rgba(91,255,176,.7); }
+  /* the prompt turns green once the beat is satisfied — the colour flip is what tells the
+     player they got it, since the text alone changes too subtly to notice mid-play */
+  .coach-wait.done{ color:var(--green); animation:none; opacity:1; }
   /* a soft pulsing ring dropped on a DOM target (ability tile, upgrade panel) the coach is
      pointing at, so the arrow has something to land on */
   .coach-highlight{ position:relative; }
@@ -921,6 +930,9 @@
   <div class="coach-text" id="coachText"></div>
   <button class="cta coach-btn" id="coachBtn">GOT IT</button>
   <div class="coach-wait" id="coachWait" style="display:none;">Try it to continue</div>
+  <!-- drains during the practice window that follows a satisfied action beat, so the pause
+       reads as "keep playing, this is timed" rather than "the tutorial has stalled" -->
+  <div class="coach-hold hidden" id="coachHold"><div class="coach-hold-fill" id="coachHoldFill"></div></div>
   <div class="coach-progress" id="coachProgress"></div>
   <div class="coach-skip" id="coachSkip">Skip tutorial</div>
 </div>
@@ -2150,6 +2162,15 @@ let tutFeedTimer = 0;          // spacing between practice shots spawned during 
 const tutFlags = { jump:false, dash:false, slow:false, picked:false };
 const tutBaseline = { sever:0, x:0, y:0 };
 
+// Satisfying an action beat used to advance on the very same frame, so the "Move" step ended
+// after roughly one step and you never got to feel the controls — which is the entire point
+// of an action beat. Meeting the condition now opens a practice window instead: the sim keeps
+// running, shots keep feeding, and the step ends when the timer drains.
+const TUT_PRACTICE_DEFAULT = 3.5;
+let tutHold = 0, tutHoldMax = 0;   // practice window remaining / its full length
+let tutMoved = 0;                  // distance travelled during a 'move' beat
+let tutPrevX = 0, tutPrevY = 0;    // last frame's position, for accumulating tutMoved
+
 // each step is either a MESSAGE beat (has a button; sim frozen while reading) or an ACTION
 // beat (has `wait`; sim runs, auto-advances once the player does the thing). Optional:
 //   arrow      — 'core' | 'player' | 'proj' | {el:'<id>'}  (drawn on the canvas each frame)
@@ -2170,22 +2191,27 @@ const TUT_STEPS = [
   { badge:'LEVELS MODE', title:'Welcome to Pulse Arena', arrow:'core',
     text:'That pulsing <b>core</b> at the center fires waves of projectiles outward. Your ship weaves through them — and in <b>Levels mode</b>, fights back. Let\'s learn how, hands-on.' },
   { badge:'LEVELS MODE', title:'Move', arrow:'player', wait:'move', waitPrompt:'Move to continue',
+    practice:4.5, holdPrompt:'Nice — keep moving, get a feel for it',
     text:'This is your ship. Get a feel for it — ' + T_MOVE + '.' },
   { badge:'LEVELS MODE', title:'Severing', arrow:'core',
     text:'Every shot drags a glowing <b>tail</b> behind it. Cut through that tail and the shot is destroyed — and the core takes damage. Severing is how you win a level.' },
   { badge:'LEVELS MODE', title:'Sever a Shot', arrow:'proj', wait:'sever', feed:true, waitPrompt:'Sever a shot to continue',
+    practice:6, holdPrompt:'That\'s a sever — try a few more',
     text:'Here come some shots. Weave your ship through a shot\'s trailing tail to <b>sever</b> it.' },
   { badge:'LEVELS MODE', title:'Jump', arrow:{el:'abJump'}, highlight:'abJump', wait:'jump', feed:true, waitPrompt:P_JUMP,
+    practice:4.5, holdPrompt:'Good — jump a few more times',
     text:'Shots hug the ground. ' + T_JUMP + ' to <b>jump</b> over them — it locks your direction until you land, so it\'s a committed dodge, not free movement.' },
   { badge:'LEVELS MODE', title:'Dash', arrow:{el:'abDash'}, highlight:'abDash', wait:'dash', feed:true, waitPrompt:P_DASH,
+    practice:4.5, holdPrompt:'Good — dash a few more times',
     text:T_DASH + ' to <b>dash</b> — a quick burst with full invulnerability. You can\'t dash mid-jump.' },
   { badge:'LEVELS MODE', title:'Slow-Mo', arrow:{el:'abSlow'}, highlight:'abSlow', wait:'slow', feed:true, waitPrompt:P_SLOW,
+    practice:5.5, holdPrompt:'Feel how the shots slow — keep going',
     text:T_SLOW + ' for <b>Slow-Mo</b> — it slows every shot so you can thread through them or line up a sever. It drains as it runs and recharges on its own.' },
   { badge:'LEVELS MODE', title:'Upgrades', arrow:{el:isTouchDevice?'abSlow':'upgradePanel'}, highlight:isTouchDevice?null:'upgradePanel',
     text:'As you play you\'ll earn <b>upgrade picks</b> — some boost your stats, others unlock whole new abilities' +
       (isTouchDevice ? ', which appear as new buttons in your ability column' : ' on <span class="k">Q</span>, <span class="k">F</span>, and <span class="k">R</span>') +
       '. Here comes your first.' },
-  { title:'Upgrades', hideCoach:true, wait:'pick', onEnter:()=>{ enterLevelUp(); if(state!=='levelup') advanceTutorial(); } }, // if the pool was empty, don't soft-lock behind a hidden coach box
+  { title:'Upgrades', hideCoach:true, wait:'pick', practice:0, onEnter:()=>{ enterLevelUp(); if(state!=='levelup') advanceTutorial(); } }, // if the pool was empty, don't soft-lock behind a hidden coach box
   { badge:'LEVELS MODE', title:'Nice Pick',
     text:'Picks like that recur every so often. Your whole build <b>resets at the start of every level or run</b>, so each attempt is a fresh set of choices.' },
   { badge:'LEVELS MODE', title:'Destroying the Core', arrow:'core',
@@ -2268,6 +2294,8 @@ function renderCoachStep(){
   document.getElementById('coachProgress').textContent = 'Step ' + (tutorialStep+1) + ' of ' + TUT_STEPS.length;
   const btn = document.getElementById('coachBtn');
   const wait = document.getElementById('coachWait');
+  document.getElementById('coachHold').classList.add('hidden'); // no practice bar until earned
+  wait.classList.remove('done');
   if(step.wait){
     btn.style.display = 'none';
     wait.style.display = '';
@@ -2291,10 +2319,12 @@ function runTutorialStep(){
   }
   // message beats freeze the sim to read; action beats let it run
   tutorialFrozen = !step.wait;
+  tutHold = tutHoldMax = 0;   // a fresh beat is never mid-practice
   if(step.wait){
     tutFlags.jump = tutFlags.dash = tutFlags.slow = tutFlags.picked = false;
     tutBaseline.sever = severCount;
     tutBaseline.x = player.x; tutBaseline.y = player.y;
+    tutMoved = 0; tutPrevX = player.x; tutPrevY = player.y;
     tutFeedTimer = 0.4;
   }
   for(const k in pressedEdge) pressedEdge[k] = false; // don't carry a stale press into the step
@@ -2310,7 +2340,10 @@ function advanceTutorial(){
 
 function tutorialWaitMet(key){
   switch(key){
-    case 'move': return Math.hypot(player.x-tutBaseline.x, player.y-tutBaseline.y) > R*0.14;
+    // distance TRAVELLED, not displacement from the spawn point: displacement is satisfied by
+    // a single nudge, and drifting back toward the start would un-satisfy it. Accumulated
+    // travel is what actually means "you have moved around".
+    case 'move': return tutMoved > R*0.9;
     case 'sever': return severCount > tutBaseline.sever;
     case 'jump': return tutFlags.jump;
     case 'dash': return tutFlags.dash;
@@ -2326,12 +2359,37 @@ function updateTutorial(dt){
   if(!tutorialActive) return;
   const step = TUT_STEPS[tutorialStep];
   if(!step || !step.wait) return;
+  // practice shots keep coming during the practice window too — that window is for playing,
+  // so an empty arena would defeat it
   if(step.feed){
     tutFeedTimer -= dt;
     const live = projectiles.filter(p=>!p.dead).length + (pendingSpawn ? 1 : 0);
     if(tutFeedTimer<=0 && live<2){ spawnStraight(); tutFeedTimer = 1.6; }
   }
-  if(tutorialWaitMet(step.wait)) advanceTutorial();
+
+  tutMoved += Math.hypot(player.x - tutPrevX, player.y - tutPrevY);
+  tutPrevX = player.x; tutPrevY = player.y;
+
+  if(tutHold > 0){
+    tutHold -= dt;
+    const fill = document.getElementById('coachHoldFill');
+    if(fill) fill.style.width = Math.max(0, (tutHold/tutHoldMax)*100) + '%';
+    if(tutHold <= 0) advanceTutorial();
+    return;
+  }
+
+  if(tutorialWaitMet(step.wait)){
+    // `practice: 0` opts a step out — the upgrade pick has nothing to rehearse, and holding
+    // there would just stall on an empty arena after the panel closes
+    const secs = step.practice !== undefined ? step.practice : TUT_PRACTICE_DEFAULT;
+    if(secs <= 0){ advanceTutorial(); return; }
+    tutHold = tutHoldMax = secs;
+    const wait = document.getElementById('coachWait');
+    wait.textContent = step.holdPrompt || 'Nice — keep practising';
+    wait.classList.add('done');
+    document.getElementById('coachHold').classList.remove('hidden');
+    document.getElementById('coachHoldFill').style.width = '100%';
+  }
 }
 
 function startTutorial(){
@@ -5422,6 +5480,31 @@ function render(){
 }
 
 // a bobbing arrow + pulsing ring dropped on whatever the current tutorial step points at
+// Arrow silhouette, in local space with the tip at the origin pointing along -Y. What makes a
+// shape read as "arrow" rather than "plus sign" is mostly the head-to-shaft ratio and the
+// swept-back barbs: the notch sits nearer the tip than the barb points do, so the trailing
+// edges rake backwards the way a drawn arrowhead does, instead of meeting the shaft square.
+const ARROW = {
+  headHalf: 15,   // half-width of the head at its widest — ~4x the shaft, so the head dominates
+  headLen:  20,   // tip to barb points
+  sweep:     6,   // how far the notch sits ahead of the barbs; 0 would give a flat-backed triangle
+  shaftHalf: 3.8,
+  len:       46   // tip to tail
+};
+
+function arrowPath(c){
+  const { headHalf:hw, headLen:hl, sweep:sv, shaftHalf:sw, len:L } = ARROW;
+  c.beginPath();
+  c.moveTo(0, 0);            // tip
+  c.lineTo( hw, hl);         // right barb
+  c.lineTo( sw, hl - sv);    // notch, raked forward
+  c.lineTo( sw, L);          // shaft, right side
+  c.lineTo(-sw, L);          // tail
+  c.lineTo(-sw, hl - sv);    // shaft, left side
+  c.lineTo(-hw, hl);         // left barb
+  c.closePath();
+}
+
 function drawTutorialArrow(){
   if(!tutorialActive) return;
   const T = tutorialArrowPoint();
@@ -5429,29 +5512,39 @@ function drawTutorialArrow(){
   const now = performance.now()/1000;
   const bob = Math.sin(now*4)*6;
   const ringR = 24 + Math.sin(now*4)*3;
+
   ctx.save();
   ctx.strokeStyle = 'rgba(255,171,74,0.95)';
   ctx.fillStyle = 'rgba(255,171,74,0.95)';
   ctx.lineWidth = 3;
   ctx.beginPath(); ctx.arc(T.x, T.y, ringR, 0, Math.PI*2); ctx.stroke();
-  // chevron sits below the target and points up at it — unless the target is low on screen,
-  // in which case it sits above and points down, so it never runs off the bottom edge
-  const pointUp = T.y > H*0.30;
-  const gap = ringR + 14 + bob;
-  const tipY = pointUp ? T.y - gap : T.y + gap;      // arrow tip (touches the ring)
-  const baseY = pointUp ? tipY - 22 : tipY + 22;      // far end of the shaft
-  const dir = pointUp ? 1 : -1;                       // +1 = tip is above base
-  ctx.beginPath();
-  ctx.moveTo(T.x, tipY);
-  ctx.lineTo(T.x - 11, tipY + dir*13);
-  ctx.lineTo(T.x - 4, tipY + dir*13);
-  ctx.lineTo(T.x - 4, baseY);
-  ctx.lineTo(T.x + 4, baseY);
-  ctx.lineTo(T.x + 4, tipY + dir*13);
-  ctx.lineTo(T.x + 11, tipY + dir*13);
-  ctx.closePath();
+
+  // Which direction the arrow flies in to reach the target. HUD targets (ability tiles, the
+  // upgrade panel) sit against a screen edge, so the arrow comes in from the arena and points
+  // outward at them — an arrow rising from below a tile pinned to the left edge reads as
+  // pointing at nothing. Targets inside the arena keep the simpler vertical approach.
+  let ang;
+  const spec = tutorialArrowSpec;
+  if(spec && spec.el){
+    ang = Math.atan2(T.y - CY, T.x - CX);       // outward from screen centre
+  } else {
+    // from below pointing up, except near the top or bottom edge where there'd be no room
+    ang = (T.y > H*0.30 && T.y < H*0.85) ? -Math.PI/2 : Math.PI/2;
+  }
+  const ux = Math.cos(ang), uy = Math.sin(ang);
+  const gap = ringR + 12 + bob;                  // bob rides along the approach, not just vertically
+
+  ctx.translate(T.x - ux*gap, T.y - uy*gap);     // tip sits `gap` back from the target
+  ctx.rotate(ang + Math.PI/2);                   // maps the shape's local -Y onto the travel direction
+
   ctx.shadowColor = 'rgba(255,171,74,0.8)'; ctx.shadowBlur = 12;
+  arrowPath(ctx);
   ctx.fill();
+  // a crisp rim keeps the silhouette legible where the glow washes over a bright projectile
+  ctx.shadowBlur = 0;
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = 'rgba(255,236,205,0.85)';
+  ctx.stroke();
   ctx.restore();
 }
 
