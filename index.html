@@ -1087,11 +1087,12 @@ function track(name, data){
   } catch(e){}                      // analytics must never be able to break the game
 }
 
-// Analytics dashboards count events grouped by property VALUE — they don't aggregate numbers.
-// Sending `pct: 37` makes almost every event unique, so the dashboard shows a thousand
-// one-count rows instead of a distribution, and high-cardinality properties are the first
-// thing these tools cap. Banding the number first turns "how far did people get" into a
-// plain count per band, which is exactly what the dashboard is good at rendering.
+// Every measurement is sent twice, as a raw number AND as a band, because the two answer
+// different questions. The band (`depth`) is a string, so "break down by depth" gives an
+// instantly readable five-bar chart. The raw number (`depth_pct`) is what PostHog needs to
+// compute a median or a p90 — banding alone throws away the resolution to do that.
+// (The bands originally existed because Vercel could only count values, never aggregate
+// them. PostHog can do both, so there's no longer a reason to pick one.)
 // Bands are [exclusiveUpperBound, label], first match wins; last must be Infinity.
 function band(v, bands){
   for(const [max, label] of bands) if(v < max) return label;
@@ -2477,7 +2478,10 @@ function showResultScreen(){
   if(gameMode==='endless'){
     // endless only ever ends by dying — there's no win state, just a final score
     endlessBeatBest = recordEndlessScore(score);
-    track('endless_end', { score: band(score, SCORE_BANDS), survived: band(elapsed, TIME_BANDS) });
+    track('endless_end', {
+      score: band(score, SCORE_BANDS), survived: band(elapsed, TIME_BANDS),
+      score_value: Math.floor(score), seconds: Math.floor(elapsed)
+    });
     canRetryWin = false;
     document.getElementById('goSubtitle').textContent = 'Endless Mode';
     titleEl.textContent = endlessBeatBest ? 'NEW HIGH SCORE' : 'RUN OVER';
@@ -2511,7 +2515,10 @@ function showResultScreen(){
     // this clear actually earned instead, popping in one at a time
     const stars = starsForTime(currentLevel, levelWinElapsed);
     // level is the grouping key, so it stays raw — 20 values is a readable breakdown
-    track('level_end', { level: String(currentLevel), result:'win', stars: String(stars), took: band(levelWinElapsed, TIME_BANDS) });
+    track('level_end', {
+      level: String(currentLevel), result:'win', stars: String(stars),
+      took: band(levelWinElapsed, TIME_BANDS), seconds: Math.round(levelWinElapsed)
+    });
     pctEl.className = 'go-time win star-row';
     pctEl.innerHTML = [1,2,3].map(i=>{
       const earned = i<=stars;
@@ -2537,7 +2544,11 @@ function showResultScreen(){
     // is differently broken from one they fail at 95%
     // `depth` is the balance signal: failing at 0-25% means too hard too early, failing at
     // 90-99% means a war of attrition that wants less core HP. Opposite fixes, same symptom.
-    track('level_end', { level: String(currentLevel), result:'fail', depth: band(pct, DEPTH_BANDS), took: band(elapsed, TIME_BANDS) });
+    track('level_end', {
+      level: String(currentLevel), result:'fail',
+      depth: band(pct, DEPTH_BANDS), took: band(elapsed, TIME_BANDS),
+      depth_pct: pct, seconds: Math.floor(elapsed)
+    });
     pctEl.className = 'go-time';
     pctEl.textContent = pct + '% destroyed';
     bestEl.innerHTML = '<b>' + severCount + '</b> sever' + (severCount===1 ? '' : 's') + ' landed';
