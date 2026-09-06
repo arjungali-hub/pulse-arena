@@ -2748,7 +2748,17 @@ const MUSIC_VOL     = 1.15;                       // master, pre-limiter
 // the game drives the music through this host: which track, how far in, how hot, and whether
 // a run is actually happening (silent at the menu / result screens)
 const MUSIC_HOST = {
-  active(){ return state==='playing' || state==='exploding' || state==='levelup'; },
+  // The upgrade pick is deliberately excluded: the track drops away while you read the cards
+  // and swells back when you choose, which frames the choice as its own beat instead of
+  // something you do underneath music that keeps driving.
+  // updateMusic() re-anchors the music clock whenever this is false, so the track resumes at
+  // the musical position the run left off at rather than wherever wall-clock time reached.
+  // Two separate conditions because the two upgrade screens stop the game differently:
+  // single-player sets state to 'levelup', while the multiplayer pick leaves it on 'playing'.
+  active(){
+    if(multiUpgradeActive) return false;
+    return state==='playing' || state==='exploding';
+  },
   time(){ return elapsed; },
   trackId(){
     // each multiplayer mode has its own dedicated track (see GAMEMODE_TRACKS)
