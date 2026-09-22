@@ -123,8 +123,13 @@
   .abilities{ display:flex; flex-direction:column; gap:12px; pointer-events:none; }
   .ability{
     width:72px; height:88px; border-radius:14px;
-    background:rgba(10,14,26,.7); border:1.5px solid rgba(255,255,255,.08);
-    backdrop-filter:blur(4px);
+    background:rgba(10,14,26,.82); border:1.5px solid rgba(255,255,255,.08);
+    /* No backdrop-filter here. These tiles have a cooldown bar whose height is rewritten as the
+       timer runs, and a blurred backdrop makes every one of those writes re-rasterise the region
+       behind the tile. Measured: pressing Dash took RecalcStyle from 0 to 46ms and roughly
+       doubled paint time for the whole cooldown, which is the stall that made the game visibly
+       step. Over a near-black canvas the blur was doing almost nothing anyway — the slightly
+       more opaque background above reads identically. */
     position:relative; overflow:hidden;
     display:flex; align-items:center; justify-content:center; flex-direction:column;
     opacity:1; transition:opacity .15s ease;
@@ -168,10 +173,15 @@
   .ability.wall{ --acc:var(--green); --acc-glow:rgba(91,255,176,.4); }
   .ability.nova{ --acc:var(--red); --acc-glow:rgba(255,74,94,.4); }
   .ability.decoy{ --acc:var(--magenta); --acc-glow:rgba(255,91,216,.4); }
+  /* A scale pop, not an animated box-shadow. Shadow blur/spread is a painted property, so
+     animating it repaints the tile on every frame of the animation — and this fires the moment
+     an ability comes off cooldown, which is exactly when the player is about to act. transform
+     is compositor-only and costs nothing; the tile keeps its static .ready glow throughout, so
+     it still reads as a pulse. */
   @keyframes readyPulse{
-    0%{ box-shadow:0 0 0 0 var(--acc-glow); }
-    50%{ box-shadow:0 0 26px 6px var(--acc-glow); }
-    100%{ box-shadow:0 0 16px 0 var(--acc-glow); }
+    0%{ transform:scale(1); }
+    45%{ transform:scale(1.07); }
+    100%{ transform:scale(1); }
   }
   .ability.justReady{ animation:readyPulse .5s ease; }
 
@@ -5800,6 +5810,12 @@ function pulseOnReady(el, wasReady, isReady){
 // only touch the DOM when a value actually changed, instead of writing ~15
 // properties every single frame regardless of whether anything moved
 const _hudCache = Object.create(null);
+// Cooldown/energy bars are driven by continuous floats, so at full precision every frame
+// produces a different string and the cache never hits — the Slow-Mo bar alone wrote a style
+// on every single frame, since its energy is always regenerating. Rounded to whole percent the
+// cache actually does its job, and on a tile ~70px tall 1% is under a pixel, so nothing moves
+// that the eye could follow anyway.
+function pct(v){ return Math.round(Math.max(0, Math.min(100, v))) + '%'; }
 function hudText(key, el, val){
   if(_hudCache[key]!==val){ _hudCache[key]=val; el.textContent = val; }
 }
@@ -5859,7 +5875,7 @@ function updateHud(){
   const jMax = jumpCdMax();
   const jReady = player.jumpCharges>0;
   const jFillPct = player.jumpCharges>=jumpChargeMax() ? 100 : Math.max(0,Math.min(100,(1-Math.max(0,player.jumpCd)/jMax)*100));
-  hudStyle('jumpFill', fillJump, 'height', jFillPct+'%');
+  hudStyle('jumpFill', fillJump, 'height', pct(jFillPct));
   hudClass('jumpReady', abJump, 'ready', jReady);
   hudClass('jumpCooling', abJump, 'cooling', !jReady);
   hudText('jumpCd', cdJump, jReady ? '' : Math.max(0,player.jumpCd).toFixed(1));
@@ -5871,7 +5887,7 @@ function updateHud(){
 
   const dMax = dashCdMax();
   const dReady = player.dashCd<=0;
-  hudStyle('dashFill', fillDash, 'height', Math.max(0,Math.min(100,(1-Math.max(0,player.dashCd)/dMax)*100))+'%');
+  hudStyle('dashFill', fillDash, 'height', pct((1-Math.max(0,player.dashCd)/dMax)*100));
   hudClass('dashReady', abDash, 'ready', dReady);
   hudClass('dashCooling', abDash, 'cooling', !dReady);
   hudText('dashCd', cdDash, dReady ? '' : Math.max(0,player.dashCd).toFixed(1));
@@ -5880,7 +5896,7 @@ function updateHud(){
 
   const eMax = slowEnergyMax();
   const eReady = !player.slowActive && player.slowEnergy > ABILITY.SLOW_MIN_TO_USE;
-  hudStyle('slowFill', fillSlow, 'height', (player.slowEnergy/eMax*100)+'%');
+  hudStyle('slowFill', fillSlow, 'height', pct(player.slowEnergy/eMax*100));
   hudStyle('slowThreshPos', slowThreshold, 'bottom', (ABILITY.SLOW_MIN_TO_USE/eMax*100)+'%');
   hudClass('slowReady', abSlow, 'ready', eReady);
   hudClass('slowCooling', abSlow, 'cooling', !eReady);
@@ -5891,7 +5907,7 @@ function updateHud(){
   hudClass('wallLocked', abWall, 'locked', !player.wallUnlocked);
   if(player.wallUnlocked){
     const wReady = player.wallCd<=0;
-    hudStyle('wallFill', fillWall, 'height', Math.max(0,Math.min(100,(1-Math.max(0,player.wallCd)/ABILITY.WALL_CD)*100))+'%');
+    hudStyle('wallFill', fillWall, 'height', pct((1-Math.max(0,player.wallCd)/ABILITY.WALL_CD)*100));
     hudClass('wallReady', abWall, 'ready', wReady);
     hudClass('wallCooling', abWall, 'cooling', !wReady);
     hudText('wallCd', cdWall, wReady ? '' : Math.max(0,player.wallCd).toFixed(1));
@@ -5902,7 +5918,7 @@ function updateHud(){
   hudClass('novaLocked', abNova, 'locked', !player.novaUnlocked);
   if(player.novaUnlocked){
     const nReady = player.novaCd<=0;
-    hudStyle('novaFill', fillNova, 'height', Math.max(0,Math.min(100,(1-Math.max(0,player.novaCd)/ABILITY.NOVA_CD)*100))+'%');
+    hudStyle('novaFill', fillNova, 'height', pct((1-Math.max(0,player.novaCd)/ABILITY.NOVA_CD)*100));
     hudClass('novaReady', abNova, 'ready', nReady);
     hudClass('novaCooling', abNova, 'cooling', !nReady);
     hudText('novaCd', cdNova, nReady ? '' : Math.max(0,player.novaCd).toFixed(1));
@@ -5913,7 +5929,7 @@ function updateHud(){
   hudClass('decoyLocked', abDecoy, 'locked', !player.decoyUnlocked);
   if(player.decoyUnlocked){
     const dcReady = player.decoyCd<=0;
-    hudStyle('decoyFill', fillDecoy, 'height', Math.max(0,Math.min(100,(1-Math.max(0,player.decoyCd)/ABILITY.DECOY_CD)*100))+'%');
+    hudStyle('decoyFill', fillDecoy, 'height', pct((1-Math.max(0,player.decoyCd)/ABILITY.DECOY_CD)*100));
     hudClass('decoyReady', abDecoy, 'ready', dcReady);
     hudClass('decoyCooling', abDecoy, 'cooling', !dcReady);
     hudText('decoyCd', cdDecoy, dcReady ? '' : Math.max(0,player.decoyCd).toFixed(1));
