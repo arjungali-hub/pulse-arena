@@ -2809,6 +2809,8 @@ let musicMuted = store.get(MUSIC_MUTED_KEY) === '1';
 // scheduler state
 let musicAnchor = 0;      // audioCtx time that corresponds to game time 0
 let musicClockReady = false; // musicAnchor has been established for the current track
+let musicActiveTarget = -1;  // last value pushed to musicActiveGain; -1 = never set
+let lastResumeTry = -1;      // throttles audioCtx.resume() retries
 let nextStep = 0;         // next absolute sixteenth-step index to schedule
 let curTrackId = null;
 let lastGameTime = -1;
@@ -2857,6 +2859,7 @@ function ensureAudio(){
   musicGain.gain.value = musicVolume();
   musicActiveGain = audioCtx.createGain();
   musicActiveGain.gain.value = 0; // silent until updateMusic() sees a run actually start
+  musicActiveTarget = 0;          // keep the change-detector in step with the fresh node
   sfxGain = audioCtx.createGain();
   sfxGain.gain.value = masterVolume;
 
@@ -3689,10 +3692,24 @@ function scheduleStep(track, step, when, intens){
 function updateMusic(){
   if(!audioCtx) return;
   // the one-shot bootstrap gesture can leave the context suspended (Safari, or a gesture the
-  // browser doesn't count) — with no retry path the music would never start, so nudge it here
-  if(audioCtx.state === 'suspended') audioCtx.resume();
+  // browser doesn't count) — with no retry path the music would never start, so nudge it here.
+  // Throttled: resume() returns a promise, and firing one every frame at a context that is
+  // staying suspended is pure garbage.
+  if(audioCtx.state === 'suspended' && audioCtx.currentTime - lastResumeTry > 0.5){
+    lastResumeTry = audioCtx.currentTime;
+    audioCtx.resume();
+  }
   const active = MUSIC_HOST.active();
-  musicActiveGain.gain.setTargetAtTime(active ? 1 : 0, audioCtx.currentTime, 0.4);
+  // ONLY on change. setTargetAtTime has no end time, so every call leaves an automation event
+  // on the param's timeline; firing it 60x a second piled up thousands of events for the audio
+  // thread to walk, which is why frame times degraded the longer a run went on rather than
+  // being merely slow. The ramp is identical — it just gets scheduled once per transition.
+  const activeTarget = active ? 1 : 0;
+  if(activeTarget !== musicActiveTarget){
+    musicActiveTarget = activeTarget;
+    musicActiveGain.gain.cancelScheduledValues(audioCtx.currentTime);
+    musicActiveGain.gain.setTargetAtTime(activeTarget, audioCtx.currentTime, 0.4);
+  }
 
   const t = MUSIC_HOST.time();
   const id = MUSIC_HOST.trackId();
@@ -4394,7 +4411,23 @@ const SPAWNERS = {
 };
 
 // ================= PARTICLES =================
+// Particles were pushed without any bound and reaped only by age. A single frame that kills a
+// lot of shots at once — a Nova into a dense wave, a Scorch Trail dash through a ring, the core
+// detonation — can emit hundreds, and every one is an additive-blended draw. Past a few hundred
+// they stop being legible anyway, so the cap costs nothing visually and removes the worst case.
+const PARTICLE_CAP = 420;
+function budgetParticles(n){
+  const room = PARTICLE_CAP - particles.length;
+  if(room >= n) return n;
+  // drop the oldest to make room rather than refusing the new burst outright: the new one is
+  // the event the player just caused and needs to see
+  const need = Math.min(n, PARTICLE_CAP);
+  if(need > room) particles.splice(0, Math.min(particles.length, need - room));
+  return need;
+}
+
 function spawnBurstParticles(x,y,color,n){
+  n = budgetParticles(n);
   for(let i=0;i<n;i++){
     const a = rand(0,Math.PI*2);
     const sp = rand(40,260);
@@ -4402,6 +4435,9 @@ function spawnBurstParticles(x,y,color,n){
   }
 }
 function spawnTrailParticle(x,y,color){
+  // per-projectile per-frame, so this is the steady-state bulk of the particle field — it
+  // yields to the cap rather than evicting, since a burst matters more than one trail puff
+  if(particles.length >= PARTICLE_CAP) return;
   particles.push({ x,y, vx:rand(-15,15), vy:rand(-15,15), life:rand(0.2,0.4), age:0, color, r:rand(1,2.6) });
 }
 // how far behind a shot its trailing tail reaches, scaled by speed — shared by the visual
@@ -4412,6 +4448,7 @@ function tailLength(speed){ return Math.min(90, 20 + speed*0.09); }
 // a short streak stretched along a direction of travel, instead of a jittering dot —
 // so a projectile's heading reads at a glance instead of being obscured by random puffs
 function spawnStreakParticle(x,y,color,angle,speed){
+  if(particles.length >= PARTICLE_CAP) return; // per-projectile per-frame, same as the trail puffs
   const len = tailLength(speed);
   particles.push({ x,y, vx:0, vy:0, life:rand(0.12,0.2), age:0, color, r:2, streak:true, angle, len });
 }
@@ -4587,13 +4624,18 @@ function updatePlayer(dt){
       player.jumpCd = player.jumpCharges<jumpChargeMax() ? jumpCdMax() : 0;
     }
   }
-  if(player.dashCd>0) player.dashCd -= dt;
-  if(player.wallT>0) player.wallT -= dt;
-  if(player.wallCd>0) player.wallCd -= dt;
-  if(player.novaCd>0) player.novaCd -= dt;
-  if(player.decoyCd>0) player.decoyCd -= dt;
-  if(player.decoyT>0) player.decoyT -= dt;
-  if(player.invincT>0) player.invincT -= dt;
+  // clamped at 0 rather than left to drift negative. Nothing reads these as anything but
+  // "> 0 means not ready", so a small negative was harmless — but it made every timer's resting
+  // value depend on the frame it happened to expire on, which is the kind of thing that quietly
+  // breaks the first time something divides by one or renders it as a fraction.
+  const tick = v => v > 0 ? Math.max(0, v - dt) : 0;
+  player.dashCd = tick(player.dashCd);
+  player.wallT  = tick(player.wallT);
+  player.wallCd = tick(player.wallCd);
+  player.novaCd = tick(player.novaCd);
+  player.decoyCd = tick(player.decoyCd);
+  player.decoyT = tick(player.decoyT);
+  player.invincT = tick(player.invincT);
 
   // clamp to outer arena wall
   const dOut = dist(CX,CY,player.x,player.y);
@@ -5945,6 +5987,11 @@ function frame(now){
   dt = Math.min(dt, 1/30);
 
   updateAdaptiveQuality(now);
+  // BEFORE the simulation, not after it. updateMusic() is what re-anchors the music clock, and
+  // updateSpawner() reads its shot grid off that anchor — running it afterwards meant the
+  // spawner spent every frame reading an anchor one frame stale, which on a frame where game
+  // time stalls (hit-stop) is exactly when the anchor is moving most.
+  updateMusic();
 
   if(hitStopT>0){
     hitStopT -= dt;
@@ -6062,7 +6109,6 @@ function frame(now){
     if(shakeT<=0){ shakeT=0; shakeMag=0; shakeMax=0; } // reset fully once a shake naturally ends
   }
   if(tutorialActive && !tutorialFrozen) updateTutorial(dt);
-  updateMusic();
   updateHud();
   updateTouchLayer();
   render();
