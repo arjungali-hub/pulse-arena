@@ -1799,6 +1799,10 @@ function resetRunState(){
   pulseRings = [];
   dashTrailPoints = [];
   nextSpawnStep = -1; // scheduled lazily on the first update, once difficulty state is live
+  // musicClockReady is deliberately NOT cleared here. It latches once and stays: the anchor is
+  // maintained every frame while the menu is up (updateMusic's !active branch), so it is already
+  // correct the moment play starts. Clearing it stranded level 1 specifically — the menu's track
+  // id is already 1, so no resync fires on entry and nothing would set it back.
   shakeT = 0; shakeMag = 0; shakeMax = 0;
   hitStopT = 0; pendingFail = false;
   coreMaxHP = CORE_MAX_HP; coreHP = CORE_MAX_HP; corePhase = 1; pendingSpawn = null;
@@ -2785,6 +2789,7 @@ let musicMuted = store.get(MUSIC_MUTED_KEY) === '1';
 
 // scheduler state
 let musicAnchor = 0;      // audioCtx time that corresponds to game time 0
+let musicClockReady = false; // musicAnchor has been established for the current track
 let nextStep = 0;         // next absolute sixteenth-step index to schedule
 let curTrackId = null;
 let lastGameTime = -1;
@@ -3678,12 +3683,16 @@ function updateMusic(){
     curTrackId = id;
     nextStep = Math.max(0, Math.ceil((t - MUSIC_T0)/STEP_DUR));
     musicAnchor = audioCtx.currentTime - t;
+    musicClockReady = true; // beatClock() may now read the grid off this anchor
+    // the anchor just moved, so any slot the spawner picked against the old one is stale —
+    // re-snap rather than fire the first shot of the level against a clock that has shifted
+    nextSpawnStep = -1;
     lastIntensity = MUSIC_HOST.intensity();
     arpCursor = 0;
   }
   lastGameTime = t;
 
-  if(!active){ musicAnchor = audioCtx.currentTime - t; return; }
+  if(!active){ musicAnchor = audioCtx.currentTime - t; musicClockReady = true; return; }
 
   // game time stalls during pause and hit-stop; push the anchor forward by the same amount
   // so the music stalls with the core instead of running on under a frozen screen
@@ -4350,7 +4359,7 @@ function triggerLevelPattern(fn){
   pulseRings.push({ t:0, dur:0.55 });
   // let the authored pattern read clearly before the regular chaos resumes — snapped back
   // onto the grid so the pause doesn't knock the barrage off the beat
-  scheduleSpawnAfterTime(elapsed + 1.6);
+  scheduleSpawnAfterTime(beatClock() + 1.6);
 }
 
 function clampToArena(p){
@@ -4742,17 +4751,47 @@ function updateParticles(dt){
 // quantised onto the same 16th-note grid the music is scheduled on, so the swell peaks and the
 // shot releases exactly on a beat.
 //
-// Only these gaps are offered, in 16ths — every one a real subdivision: whole bar, dotted
-// half, half, dotted quarter, quarter, dotted eighth, eighth, sixteenth. The powers of two
-// divide the bar and so repeat on identical positions every bar; the dotted values (12, 6, 3)
-// deliberately do not, and instead read as a three-against-four cross-rhythm that resolves
-// every three bars. Both are locked to the grid — the dotted ones exist because a
-// powers-of-two-only set would double the fire rate at every difficulty step, which is far
-// too coarse a ramp.
-const SPAWN_GAPS = [16, 12, 8, 6, 4, 3, 2, 1];
+// Powers of two ONLY, in 16ths: whole bar, half, quarter, eighth, sixteenth.
+//
+// The earlier set also offered the dotted values 12, 6 and 3, on the reasoning that they are
+// real subdivisions and gave a finer difficulty ramp. That was wrong in practice. Every
+// track's kick lands on step 0 with 4, 8 and 12 near-universal (the commonest pattern is a
+// flat four-on-the-floor, 'x...x...x...x...'), so the audible pulse is the quarter note. A
+// gap of 6 walks 0,6,12,2,8,14,4,10 and so coincides with a kick twice in eight shots; the
+// rest land between beats. On the grid arithmetically, audibly off-beat — a cross-rhythm the
+// ear reads as the fire rate wandering rather than as deliberate syncopation.
+//
+// Only gaps that divide the quarter-note pulse can land on it every time. The cost is a
+// coarser ramp: across the campaign this yields half notes (L1-2), quarters (L3-12) and
+// eighths (L13-20) rather than eight distinct rates. Peak and floor fire rates are unchanged,
+// the steps between them just read as the barrage doubling up, and speed, projectile count,
+// attack roster and authored patterns all still ramp independently of fire rate.
+const SPAWN_GAPS = [16, 8, 4, 2, 1];
 const SPAWN_WINDUP = 0.22; // seconds the core swells before it lets go
 
 function gridStepTime(k){ return MUSIC_T0 + k*STEP_DUR; }
+
+// The clock the shot grid is read off: the MUSIC's, not the game's.
+//
+// `elapsed` is deliberately lossy. dt is clamped to 1/30 in frame() and zeroed outright during
+// hit-stop, so on any machine that drops frames game time falls behind real time — permanently,
+// since nothing ever gives it back. updateMusic() compensates by nudging musicAnchor forward so
+// the notes stay where the player actually hears them, and because that correction only ever
+// moves forward the gap between `elapsed` and the audible beat grows monotonically. A grid
+// computed from `elapsed` therefore drifts off the beat and never returns, which is exactly the
+// "tempos vary" symptom: measured at 265ms of skew on a frame-dropping run.
+//
+// Reading the grid off `audioCtx.currentTime - musicAnchor` — the same expression scheduleStep()
+// uses to place its notes — makes the shot and its beat coincide by construction, however badly
+// frame timing behaves.
+//
+// Falls back to game time whenever the context isn't running: gating spawns on a suspended
+// audio clock (autoplay not yet unlocked, tab backgrounded) would stop the barrage dead.
+function beatClock(){
+  return (musicClockReady && audioCtx && audioCtx.state === 'running')
+    ? audioCtx.currentTime - musicAnchor
+    : elapsed;
+}
 
 // the allowed gap closest to the interval the difficulty curve is asking for
 function spawnGapSteps(){
@@ -4783,7 +4822,8 @@ function scheduleSpawnAfterTime(t){
 // core wind-up instead of firing instantly, giving the core a visible tell before it acts
 function updateSpawner(dt){
   if(tutorialActive) return; // the tutorial hand-feeds its own practice shots via updateTutorial
-  if(nextSpawnStep < 0) scheduleSpawnAfterTime(elapsed + 1.0);
+  const now = beatClock(); // music time, so the shot lands on the beat the player hears
+  if(nextSpawnStep < 0) scheduleSpawnAfterTime(now + 1.0);
   // A shot can only be released on a frame boundary, so the beat almost never falls exactly on
   // one. Releasing on the NEAREST frame rather than the first one past the beat keeps the error
   // centred on zero instead of always running late, which halves it.
@@ -4793,8 +4833,8 @@ function updateSpawner(dt){
   // this rather than on every frame is also what keeps pickAttack() to one roll per shot.
   if(!pendingSpawn){
     const fireAt = gridStepTime(nextSpawnStep);
-    const instant = elapsed + slack >= fireAt;      // a long frame can skip the lead-in entirely
-    if(elapsed >= fireAt - SPAWN_WINDUP){
+    const instant = now + slack >= fireAt;          // a long frame can skip the lead-in entirely
+    if(now >= fireAt - SPAWN_WINDUP){
       const type = pickAttack();
       // sniper and laser telegraph with their own aim line, so they take no core swell
       const noSwell = instant || type==='sniper' || type==='laser';
@@ -4807,13 +4847,13 @@ function updateSpawner(dt){
     // beat however the frame times happen to fall
     pendingSpawn.windupT = pendingSpawn.windupDur > 0
       ? Math.max(0, Math.min(pendingSpawn.windupDur,
-          pendingSpawn.windupDur - (pendingSpawn.fireAt - elapsed)))
+          pendingSpawn.windupDur - (pendingSpawn.fireAt - now)))
       : 0;
-    if(elapsed + slack >= pendingSpawn.fireAt){
+    if(now + slack >= pendingSpawn.fireAt){
       SPAWNERS[pendingSpawn.type]();
       // start the ring already aged by however late this frame is, so the expanding pulse is
       // phase-correct on the beat even though the frame that spawned it wasn't
-      pulseRings.push({ t: Math.max(0, elapsed - pendingSpawn.fireAt), dur:0.55 });
+      pulseRings.push({ t: Math.max(0, now - pendingSpawn.fireAt), dur:0.55 });
       pendingSpawn = null;
       scheduleSpawnAfterStep(nextSpawnStep);
     }
@@ -5164,7 +5204,9 @@ function drawCore(){
   ctx.save();
   ctx.translate(CX,CY);
   ctx.scale(R/400, R/400); // draw at fixed pixels tuned for R=400, then scale to the actual arena
-  const pulse = 1 + Math.sin(elapsed*3.2)*0.06;
+  // beatClock(), not elapsed: this breathing IS the bar (CORE_OMEGA is where the tempo comes
+  // from), so it has to ride the music's clock or it drifts off its own downbeat
+  const pulse = 1 + Math.sin(beatClock()*CORE_OMEGA)*0.06;
   // guard the divisor: sniper/laser telegraph themselves and are armed with windupDur 0, and
   // 0/0 here would put a NaN straight into createRadialGradient and kill the render loop
   const windup = (pendingSpawn && pendingSpawn.windupDur > 0)
