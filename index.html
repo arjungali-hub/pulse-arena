@@ -349,7 +349,11 @@
   .pvp-stat.out{ color:var(--dim); }
   .pvp-bar{ height:6px; border-radius:4px; background:rgba(255,255,255,.1); overflow:hidden; }
   .pvp-panel.right .pvp-bar{ transform:scaleX(-1); }
-  .pvp-bar-fill{ height:100%; width:100%; background:var(--p1,#5be3ff); transition:width .1s linear; }
+  /* scaleX, not width. This bar is rewritten every frame while Dash recharges, and animating
+     width forces a layout pass each time; transform is compositor-only. The parent's
+     scaleX(-1) on the right-hand panel still composes correctly with this. */
+  .pvp-bar-fill{ height:100%; width:100%; background:var(--p1,#5be3ff);
+    transform-origin:left center; transform:scaleX(1); transition:transform .1s linear; }
   .pvp-panel.right .pvp-bar-fill{ background:var(--p2,#ff5bd8); }
 
   /* on-screen control reference — multiplayer controls differ from single-player, so each
@@ -1987,31 +1991,39 @@ function setPvpHud(show){
   document.getElementById('pvpCtrlP2').classList.toggle('hidden', !show);
 }
 
+// Every write here goes through the hud* cache. It used to re-query the DOM and rewrite each
+// label on every frame — including the constant "PLAYER 1" text — while the stat line and the
+// dash bar genuinely change many times a second. That is the same per-frame style invalidation
+// that made single-player stall on every ability press; multiplayer just had none of the
+// caching. Element lookups are hoisted out of the loop for the same reason.
+function pvpEl(id){ return (pvpEl.c || (pvpEl.c = Object.create(null)))[id] || (pvpEl.c[id] = document.getElementById(id)); }
+
 function updatePvpHud(){
   for(let i=0;i<2;i++){
     const p = players[i], n = i+1;
-    document.getElementById('pvpName'+'P'+n).textContent = 'PLAYER '+n;
-    const statEl = document.getElementById('pvpStat'+'P'+n);
+    hudText('pvpName'+n, pvpEl('pvpNameP'+n), 'PLAYER '+n);
+    const statEl = pvpEl('pvpStatP'+n);
     const isDown = !p.alive && p.respawnT>0; // not `down` — that name is the global input helper
+    let stat = '', out = false;
     if(isDown){
-      statEl.textContent = 'DOWN · '+p.respawnT.toFixed(1)+'s';
-      statEl.classList.add('out');
+      stat = 'DOWN · '+p.respawnT.toFixed(1)+'s'; out = true;
     } else if(pvp && pvpMode==='race'){
-      statEl.textContent = Math.round(Math.max(0,p.halfHP)/PVP_HALF_HP*100)+'% left';
-      statEl.classList.remove('out');
+      stat = Math.round(Math.max(0,p.halfHP)/PVP_HALF_HP*100)+'% left';
     } else if(pvp && pvpMode==='survival'){
       const t = p.survivalTime.toFixed(1);
-      statEl.textContent = p.alive ? (t+'s') : ('OUT · '+t+'s');
-      statEl.classList.toggle('out', !p.alive);
+      stat = p.alive ? (t+'s') : ('OUT · '+t+'s'); out = !p.alive;
     } else if(coop){
       // co-op: survival shows shared time; takedown shows the shared core's remaining HP
-      if(coopMode==='survival') statEl.textContent = players[0].survivalTime.toFixed(1)+'s';
-      else statEl.textContent = Math.round(Math.max(0,coreHP)/coreMaxHP*100)+'% core';
-      statEl.classList.remove('out');
+      stat = coopMode==='survival'
+        ? players[0].survivalTime.toFixed(1)+'s'
+        : Math.round(Math.max(0,coreHP)/coreMaxHP*100)+'% core';
     }
-    // dash-cooldown bar — fills back up as Dash recharges (no Slow-Mo in multiplayer)
+    hudText('pvpStat'+n, statEl, stat);
+    hudClass('pvpOut'+n, statEl, 'out', out);
+    // dash-cooldown bar — fills back up as Dash recharges (no Slow-Mo in multiplayer).
+    // Quantised to whole percent so the cache actually hits; the bar is a few px tall.
     const frac = p.dashCd<=0 ? 1 : Math.max(0, Math.min(1, 1 - p.dashCd/dashCdMax(p)));
-    document.getElementById('pvpSlow'+'P'+n).style.width = (frac*100)+'%';
+    hudStyle('pvpBar'+n, pvpEl('pvpSlowP'+n), 'transform', 'scaleX('+(Math.round(frac*100)/100)+')');
   }
 }
 
@@ -2042,6 +2054,9 @@ function showPvpResult(winner){
 
 function exitPvp(){
   pvp = false; pvpMode = null; coop = false; coopMode = null; players = null; pvpOver = false;
+  // multiUpgradeActive gates the sim and swallows Escape, so leaving it set on the way out
+  // would follow us into single-player as an unpausable, frozen game
+  closeMultiUpgrade();
   activeKeybinds = keybinds;
   // restore a clean single-player `player` so the rest of the game (HUD reads, menu) has a
   // valid object to point at
@@ -5089,6 +5104,7 @@ function checkPvpWin(){
 function endPvpMatch(raceWinner){
   pvpOver = true;
   state = 'gameover';
+  closeMultiUpgrade(); // see endCoopMatch — the pick must never outlive the match
   let winner;
   if(pvpMode==='race'){
     winner = raceWinner;
@@ -5107,6 +5123,12 @@ function endCoopMatch(won){
   if(pvpOver) return;
   pvpOver = true;
   state = 'gameover';
+  // The shared upgrade pick is a full-screen overlay and nothing else tears it down. If a
+  // match ever ends with one open it sits on top of the result screen and swallows the clicks
+  // on REMATCH and MAIN MENU — a soft-lock with no way out but a reload. Today the sim is
+  // frozen while a pick is open so the two states should not overlap, but "should not" is not
+  // a guarantee worth betting a stuck player on, and closing it here is free.
+  closeMultiUpgrade();
   showCoopResult(won);
 }
 
